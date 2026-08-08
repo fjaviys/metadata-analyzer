@@ -1,0 +1,43 @@
+# ---- Metadata Analyzer .gitignore ----
+
+# Runtime data (DB, backups, logs) — never commit user data
+data/
+!data/.gitkeep
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+venv/
+.venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.db
+*.sqlite
+*.sqlite3
+
+# Node / frontend
+node_modules/
+frontend/dist/
+frontend/.astro/
+.cache/
+npm-debug.log*
+yarn-error.log*
+
+# Secrets & certs
+.env
+.env.local
+*.pem
+*.key
+*.crt
+docker/nginx/certs/*
+!docker/nginx/certs/.gitkeep
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
