@@ -1,0 +1,12 @@
+---
+import MainLayout from '../layouts/MainLayout.astro';
+import ConfigForm from '../components/ConfigForm.vue';
+---
+<MainLayout title="Configuración · Metadata Analyzer" active="config">
+  <h1 class="mb-2 text-xl font-semibold text-slate-800">Configuración de conexión</h1>
+  <p class="mb-6 max-w-2xl text-slate-600">
+    Introduce los datos de conexión y pruébala en vivo. La configuración se guarda
+    en este navegador para usarla al lanzar el análisis.
+  </p>
+  <ConfigForm client:load />
+</MainLayout>

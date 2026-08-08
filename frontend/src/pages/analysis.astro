@@ -1,0 +1,12 @@
+---
+import MainLayout from '../layouts/MainLayout.astro';
+import AnalysisRunner from '../components/AnalysisRunner.vue';
+---
+<MainLayout title="Análisis · Metadata Analyzer" active="analysis">
+  <h1 class="mb-2 text-xl font-semibold text-slate-800">Análisis de una carpeta</h1>
+  <p class="mb-6 max-w-2xl text-slate-600">
+    Paso obligatorio antes de corregir. Es de solo lectura: no modifica ningún
+    archivo. Verás el progreso en vivo y, al terminar, el informe y los resultados.
+  </p>
+  <AnalysisRunner client:load />
+</MainLayout>

@@ -1,0 +1,13 @@
+---
+import MainLayout from '../../layouts/MainLayout.astro';
+import ResultsView from '../../components/ResultsView.vue';
+
+const { id } = Astro.params;
+const sessionId = Number(id);
+if (!Number.isFinite(sessionId)) {
+  return Astro.redirect('/analysis');
+}
+---
+<MainLayout title={`Resultados #${sessionId} · Metadata Analyzer`} active="analysis">
+  <ResultsView client:load sessionId={sessionId} />
+</MainLayout>

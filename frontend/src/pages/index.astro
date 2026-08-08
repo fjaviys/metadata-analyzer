@@ -1,0 +1,35 @@
+---
+import MainLayout from '../layouts/MainLayout.astro';
+import SessionsList from '../components/SessionsList.vue';
+
+const steps = [
+  { n: 1, title: 'Configura', text: 'Conecta tu sistema de archivos, Immich u OMV y prueba la conexión.', href: '/config' },
+  { n: 2, title: 'Analiza', text: 'Análisis de solo lectura de una carpeta. Genera informe PDF y estadísticas.', href: '/analysis' },
+  { n: 3, title: 'Revisa', text: 'Consulta resultados, gráficos por carpeta y duplicados.', href: '/analysis' },
+  { n: 4, title: 'Corrige', text: 'Selecciona carpetas y corrige con dry-run, backup y verificación.', href: '/corrections' },
+];
+---
+<MainLayout title="Metadata Analyzer" active="home">
+  <section class="mb-8">
+    <h1 class="text-2xl font-semibold text-slate-800">Analiza y corrige metadatos con seguridad</h1>
+    <p class="mt-2 max-w-2xl text-slate-600">
+      Detecta fechas de captura incorrectas o corruptas en tus fotos y vídeos, genera
+      un informe y corrígelas de forma transaccional —siempre con análisis previo,
+      backup automático, verificación y modo simulación.
+    </p>
+  </section>
+
+  <section class="mb-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+    {steps.map((s) => (
+      <a href={s.href} class="card transition-shadow hover:shadow-md">
+        <div class="mb-2 flex h-8 w-8 items-center justify-center rounded-full bg-brand-50 text-sm font-semibold text-brand-700">
+          {s.n}
+        </div>
+        <p class="font-semibold text-slate-800">{s.title}</p>
+        <p class="mt-1 text-sm text-slate-500">{s.text}</p>
+      </a>
+    ))}
+  </section>
+
+  <SessionsList client:load />
+</MainLayout>
