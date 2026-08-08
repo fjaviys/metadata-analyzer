@@ -88,10 +88,56 @@ python -m pytest tests/ -v
 - [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — Docker, certs SSL, ro→rw
 - [docs/SECURITY.md](docs/SECURITY.md) — modelo de seguridad y decisiones
 
+## Checklist de verificación
+
+Tras `docker compose up -d --build`:
+
+```bash
+# 1) Healthcheck del backend (debe devolver exiftool: true)
+curl -k https://localhost/health
+
+# 2) Raíces permitidas
+curl -k https://localhost/api/config/roots
+
+# 3) Probar conexión local (debe rechazar rutas de sistema)
+curl -k -X POST https://localhost/api/config/test \
+  -H 'Content-Type: application/json' -d '{"type":"local","root_path":"/etc"}'   # ok:false
+
+# 4) Lanzar un análisis de ejemplo
+curl -k -X POST https://localhost/api/analysis \
+  -H 'Content-Type: application/json' -d '{"root_path":"/media","detect_duplicates":true}'
+#   -> {"session_id": N, ...}   Observa el progreso en la UI (WebSocket)
+
+# 5) Ver resumen y descargar el informe PDF
+curl -k https://localhost/api/results/N/summary
+curl -k https://localhost/api/results/N/report -o informe.pdf
+
+# 6) Corrección en DRY-RUN (no escribe nada)
+curl -k -X POST https://localhost/api/corrections \
+  -H 'Content-Type: application/json' -d '{"session_id":N,"dry_run":true}'
+
+# 7) Corrección REAL sin confirmar -> debe responder 428
+curl -k -i -X POST https://localhost/api/corrections \
+  -H 'Content-Type: application/json' -d '{"session_id":N,"dry_run":false,"confirm_real_write":false}'
+```
+
+Tests de la lógica (local, sin Docker):
+
+```bash
+python -m pytest tests/ -v      # 47 tests (date/metadata/db/correction/report/api)
+```
+
+Comprobaciones de seguridad esperadas:
+- `docker-compose.yml` monta los medios en `:ro` (`MEDIA_READ_ONLY=true`) por defecto.
+- La corrección real exige confirmación explícita (428 sin ella).
+- Cada corrección real hace backup previo y verifica por re-lectura.
+
 ## Estado
 
-En construcción por bloques (ver historial de commits). El código de corrección
-**no** escribe sobre archivos reales hasta confirmación explícita del usuario.
+Implementado por bloques (ver historial de commits): lógica compartida con tests,
+backend FastAPI, frontend Astro+Vue, Docker/Nginx y documentación. El código de
+corrección **no** escribe sobre archivos reales hasta confirmación explícita del
+usuario, y admite dry-run en todo el flujo.
 
 ## Licencia
 
