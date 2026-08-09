@@ -1,5 +1,51 @@
 # DEPLOYMENT — Despliegue con Docker
 
+## Opción A (recomendada para NAS/OMV): imágenes desde GHCR, sin construir
+
+Usa `docker-compose.nas.yml`, que descarga las imágenes ya publicadas en GitHub
+Container Registry. No necesitas el código fuente en el NAS ni construir nada, ni
+tampoco Nginx (el frontend habla con el backend directamente por su puerto).
+
+Las imágenes se publican automáticamente (GitHub Actions) en cada push a `master`
+y en cada tag `vX.Y.Z`:
+- `ghcr.io/fjaviys/metadata-analyzer-backend:latest`
+- `ghcr.io/fjaviys/metadata-analyzer-frontend:latest`
+
+> Las imágenes son **públicas**, así que el NAS puede hacer `pull` sin
+> `docker login`. (Si alguna vez el paquete apareciera como privado, hazlo público
+> en GitHub → Packages → *Package settings* → *Change visibility*.)
+
+### Pasos en OMV / Portainer
+
+1. En el plugin **Compose** de OMV (o un stack de Portainer), pega el contenido de
+   [`docker-compose.nas.yml`](../docker-compose.nas.yml).
+2. Define las variables (en el propio gestor o en un `.env` junto al compose):
+   ```env
+   NAS_HOST=192.168.1.50           # IP/host del NAS accesible desde tu navegador
+   MEDIA_HOST_PATH=/srv/dev-disk-by-uuid-XXXX/fotos
+   BACKEND_PORT=8000
+   FRONTEND_PORT=4321
+   MEDIA_READ_ONLY=true            # solo lectura por defecto
+   ```
+3. Despliega. Accesos:
+   - UI:     `http://NAS_HOST:4321`
+   - API:    `http://NAS_HOST:8000/api`  ·  Health: `http://NAS_HOST:8000/health`
+4. Para correcciones reales: cambia `MEDIA_READ_ONLY=false` y recrea el backend
+   (empieza siempre por dry-run en la interfaz). Vuelve a `true` al terminar.
+
+> Estado: **BETA (v0.1.0-beta)**. Prueba primero en dry-run y con backups.
+
+Actualizar a la última versión:
+```bash
+docker compose -f docker-compose.nas.yml pull
+docker compose -f docker-compose.nas.yml up -d
+```
+
+## Opción B: construir localmente (con Nginx + TLS)
+
+Requiere el código fuente y usa `docker-compose.yml` (backend + frontend + Nginx
+como proxy inverso con HTTPS y WebSocket unificados en un solo origen).
+
 ## Requisitos
 
 - Docker + Docker Compose v2.

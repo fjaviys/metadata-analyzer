@@ -38,7 +38,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Metadata Analyzer API",
-    version="0.1.0",
+    version="0.1.0-beta",
     description="Análisis y corrección segura de metadatos de fecha (Immich/OMV).",
     docs_url="/docs", openapi_url="/openapi.json",
     lifespan=lifespan,

@@ -1,0 +1,81 @@
+# Metadata Analyzer — stack para NAS / OMV / Portainer (BETA v0.1.0-beta)
+# =========================================================================
+# Este compose NO construye nada: descarga las imágenes ya publicadas en
+# GitHub Container Registry (ghcr.io). Pégalo en el plugin "Compose" de OMV
+# o en un stack de Portainer.
+#
+# Requisitos:
+#   1) Definir las variables (abajo) — normalmente en el propio gestor o en un .env
+#      junto a este archivo:
+#        NAS_HOST        IP o hostname del NAS accesible desde tu navegador (p. ej. 192.168.1.50)
+#        MEDIA_HOST_PATH ruta en el NAS con tus fotos/vídeos (share de OMV)
+#   2) Las imágenes GHCR son públicas: no hace falta `docker login`.
+#
+# SEGURIDAD: los medios se montan en SOLO LECTURA (read_only: true) por defecto.
+# Para ejecutar correcciones REALES, cambia a MEDIA_READ_ONLY=false (ver más abajo)
+# y recrea el backend. Empieza siempre por el modo dry-run en la interfaz.
+
+services:
+  backend:
+    image: ghcr.io/fjaviys/metadata-analyzer-backend:latest
+    container_name: ma-backend
+    restart: unless-stopped
+    environment:
+      APP_ENV: production
+      LOG_LEVEL: INFO
+      ALLOWED_MEDIA_ROOTS: /media
+      DATABASE_URL: sqlite:///data/db/metadata_analyzer.db
+      BACKUP_DIR: data/backups
+      LOG_DIR: data/logs
+      REPORT_DIR: data/reports
+      BACKUP_KEEP_LAST: "10"
+      CORRECTION_ERROR_ABORT_RATIO: "0.10"
+    ports:
+      # El navegador habla directamente con el backend en este puerto.
+      - "${BACKEND_PORT:-8000}:8000"
+    volumes:
+      - type: bind
+        source: ${MEDIA_HOST_PATH:?define MEDIA_HOST_PATH}
+        target: /media
+        read_only: ${MEDIA_READ_ONLY:-true}
+      - ma-data:/app/backend/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    networks: [ma-net]
+
+  frontend:
+    image: ghcr.io/fjaviys/metadata-analyzer-frontend:latest
+    container_name: ma-frontend
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: "4321"
+      # URL del backend accesible DESDE EL NAVEGADOR (no desde el contenedor).
+      MA_API_BASE: "http://${NAS_HOST:?define NAS_HOST}:${BACKEND_PORT:-8000}/api"
+      MA_WS_BASE: "ws://${NAS_HOST}:${BACKEND_PORT:-8000}"
+    ports:
+      - "${FRONTEND_PORT:-4321}:4321"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks: [ma-net]
+
+volumes:
+  ma-data:
+
+networks:
+  ma-net:
+    driver: bridge
+
+# --- Acceso ---
+# UI:      http://NAS_HOST:4321
+# API:     http://NAS_HOST:8000/api   ·   Health: http://NAS_HOST:8000/health
+#
+# --- Pasar a correcciones reales ---
+# Añade  MEDIA_READ_ONLY=false  a las variables y recrea el backend. Recuerda
+# volver a  true  cuando termines.

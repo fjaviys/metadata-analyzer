@@ -6,8 +6,21 @@ import type {
   ProgressEvent, SessionSummary,
 } from '../types/api';
 
-const API_BASE = (import.meta.env.PUBLIC_API_BASE_URL as string) || '/api';
-const WS_BASE = (import.meta.env.PUBLIC_WS_BASE_URL as string) || '';
+// Config de runtime inyectada por el servidor (window.__MA_CONFIG__ en MainLayout).
+// Permite que una imagen ya construida apunte a cualquier backend sin recompilar.
+// Prioridad: runtime (window) > variable de build (PUBLIC_*) > valor relativo.
+interface RuntimeConfig { apiBase?: string; wsBase?: string }
+function runtimeConfig(): RuntimeConfig {
+  if (typeof window !== 'undefined' && (window as any).__MA_CONFIG__) {
+    return (window as any).__MA_CONFIG__ as RuntimeConfig;
+  }
+  return {};
+}
+
+const API_BASE =
+  runtimeConfig().apiBase || (import.meta.env.PUBLIC_API_BASE_URL as string) || '/api';
+const WS_BASE =
+  runtimeConfig().wsBase || (import.meta.env.PUBLIC_WS_BASE_URL as string) || '';
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {

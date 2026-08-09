@@ -1,5 +1,8 @@
 # Metadata Analyzer
 
+> **Estado: BETA · v0.1.0-beta.** Software en pruebas. Úsalo con backups y empieza
+> siempre por el modo *dry-run*. La interfaz de versión es inestable hasta la 1.0.
+
 Herramienta web para **analizar y corregir de forma segura** los metadatos de fecha
 (captura/creación) de fotos y vídeos gestionados con **Immich** sobre un NAS
 **OpenMediaVault**. Detecta fechas incorrectas, metadatos corruptos y duplicados,
@@ -55,16 +58,28 @@ Detalle completo en [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Puesta en marcha rápida
 
+### En el NAS (OMV / Portainer) — imágenes desde GitHub (recomendado)
+
+Pega [`docker-compose.nas.yml`](docker-compose.nas.yml) en el gestor de Docker. No
+construye nada: descarga las imágenes públicas de GHCR. Define `NAS_HOST` y
+`MEDIA_HOST_PATH` (ver [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)).
+
+```bash
+docker compose -f docker-compose.nas.yml up -d
+```
+- UI:     http://NAS_HOST:4321
+- API:    http://NAS_HOST:8000/api  ·  Health: http://NAS_HOST:8000/health
+
+### Construyendo en local (con Nginx + HTTPS)
+
 ```bash
 cp .env.example .env      # ajusta rutas, Immich/OMV, MEDIA_HOST_PATH
-# Genera certs autofirmados para desarrollo (ver docs/DEPLOYMENT.md):
-#   bash docker/nginx/gen-certs.sh
-docker-compose up -d
+bash docker/nginx/gen-certs.sh   # certs autofirmados (desarrollo)
+docker compose up -d
 ```
-
 - UI:      https://localhost/
-- API:     https://localhost/api  ·  docs OpenAPI: https://localhost/api/docs
-- Health:  https://localhost/api/health
+- API:     https://localhost/api  ·  docs OpenAPI: https://localhost/docs
+- Health:  https://localhost/health
 
 ### Desarrollo local (sin Docker)
 

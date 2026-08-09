@@ -4,7 +4,7 @@
 #
 # SEGURIDAD: la carpeta de medios se monta en el backend en SOLO LECTURA (:ro)
 # por defecto. Solo cuando vayas a ejecutar correcciones REALES, cambia el modo a
-# lectura/escritura siguiendo docs/DEPLOYMENT.md (variable MEDIA_MOUNT_MODE=rw).
+# lectura/escritura siguiendo docs/DEPLOYMENT.md (variable MEDIA_READ_ONLY=false).
 
 services:
   backend:

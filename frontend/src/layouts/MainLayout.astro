@@ -7,6 +7,15 @@ interface Props {
 }
 const { title = 'Metadata Analyzer', active = '' } = Astro.props;
 
+// Config de runtime inyectada desde el servidor (SSR). Permite que una imagen ya
+// construida apunte a cualquier backend sin recompilar. Si no se define, se usan
+// rutas relativas (mismo origen, p. ej. tras un proxy inverso).
+const env = (globalThis as any).process?.env ?? {};
+const runtimeConfig = {
+  apiBase: env.MA_API_BASE || '/api',
+  wsBase: env.MA_WS_BASE || '',
+};
+
 const nav = [
   { href: '/', label: 'Inicio', key: 'home' },
   { href: '/config', label: 'Configuración', key: 'config' },
@@ -20,6 +29,7 @@ const nav = [
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{title}</title>
+    <script is:inline set:html={`window.__MA_CONFIG__=${JSON.stringify(runtimeConfig)}`}></script>
   </head>
   <body class="min-h-screen bg-slate-50 text-slate-800">
     <header class="border-b border-slate-200 bg-white">
