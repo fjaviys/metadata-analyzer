@@ -19,6 +19,7 @@ import json
 import os
 import shutil
 import subprocess
+import time
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
@@ -326,9 +327,70 @@ def iter_media_files(root: str, max_depth: Optional[int] = None,
 
 def count_media_files(root: str, max_depth: Optional[int] = None,
                       allowed_exts: Optional[set[str]] = None) -> int:
-    """Cuenta rápido los archivos multimedia bajo `root` (sin leer EXIF)."""
+    """Cuenta EXACTO los archivos multimedia bajo `root` (sin leer EXIF)."""
     return sum(1 for _ in iter_media_files(root, max_depth=max_depth,
                                            allowed_exts=allowed_exts))
+
+
+def count_media_files_approx(
+    root: str,
+    max_depth: Optional[int] = None,
+    allowed_exts: Optional[set[str]] = None,
+    time_budget: float = 1.5,
+) -> dict:
+    """
+    Estimación RÁPIDA del nº de archivos multimedia bajo `root`.
+
+    Cuenta los archivos del propio `root` y luego cuenta subárboles de primer nivel
+    completos hasta agotar `time_budget` (segundos). Si le da tiempo a recorrer
+    todos, el total es EXACTO; si no, extrapola por el nº de subcarpetas de primer
+    nivel ya procesadas.
+
+    Devuelve {"total": int, "approximate": bool, "scanned_subdirs": int,
+              "total_subdirs": int}.
+    """
+    exts = allowed_exts if allowed_exts is not None else MEDIA_EXTS
+    root = os.path.abspath(root)
+    child_depth = None if max_depth is None else max(max_depth - 1, 0)
+
+    subdirs: list[str] = []
+    root_files = 0
+    try:
+        with os.scandir(root) as it:
+            for entry in it:
+                try:
+                    if entry.is_dir(follow_symlinks=False):
+                        subdirs.append(entry.path)
+                    elif os.path.splitext(entry.name)[1].lower() in exts:
+                        root_files += 1
+                except OSError:
+                    continue
+    except OSError:
+        return {"total": 0, "approximate": False, "scanned_subdirs": 0,
+                "total_subdirs": 0}
+
+    n_sub = len(subdirs)
+    if n_sub == 0 or (max_depth is not None and max_depth <= 0):
+        return {"total": root_files, "approximate": False,
+                "scanned_subdirs": 0, "total_subdirs": 0}
+
+    start = time.monotonic()
+    scanned = 0
+    counted = 0
+    for d in subdirs:
+        counted += count_media_files(d, max_depth=child_depth, allowed_exts=exts)
+        scanned += 1
+        if time.monotonic() - start > time_budget:
+            break
+
+    if scanned >= n_sub:
+        return {"total": root_files + counted, "approximate": False,
+                "scanned_subdirs": scanned, "total_subdirs": n_sub}
+
+    # extrapolación por subcarpetas de primer nivel procesadas
+    est = root_files + round(counted / scanned * n_sub)
+    return {"total": int(est), "approximate": True,
+            "scanned_subdirs": scanned, "total_subdirs": n_sub}
 
 
 def _folder_levels(root: str, path: str) -> tuple[str, str]:
@@ -487,6 +549,7 @@ def analyze_folder(
 __all__ = [
     "FileMetadata", "AnalysisResult", "FolderStat",
     "analyze_one", "analyze_folder", "iter_media_files", "count_media_files",
+    "count_media_files_approx",
     "run_exiftool", "parse_exif_datetime", "exiftool_available",
     "resolve_extensions",
     "PHOTO_EXTS", "VIDEO_EXTS", "MEDIA_EXTS", "DATE_TAG_PRIORITY",

@@ -87,12 +87,17 @@ async def test_connection(req: ConnectionTestRequest):
         if not ma.exiftool_available():
             return ConnectionTestResult(
                 ok=False, message="exiftool no está disponible en el backend")
-        # COMPROBACIÓN: contar PRIMERO el total de archivos multimedia (recursivo).
-        total = ma.count_media_files(real, max_depth=settings.max_walk_depth)
+        # COMPROBACIÓN: estimar PRIMERO el total de archivos multimedia (rápido).
+        est = ma.count_media_files_approx(real, max_depth=settings.max_walk_depth)
+        total = est["total"]
+        prefix = "~" if est["approximate"] else ""
+        approx_txt = " (aprox.)" if est["approximate"] else ""
         return ConnectionTestResult(
             ok=True,
-            message=f"Carpeta accesible: {real} · {total} archivos multimedia detectados",
-            details={"root": real, "total_media_files": total},
+            message=(f"Carpeta accesible: {real} · {prefix}{total} archivos "
+                     f"multimedia detectados{approx_txt}"),
+            details={"root": real, "total_media_files": total,
+                     "approximate": est["approximate"]},
         )
 
     if req.type == "immich":

@@ -97,6 +97,32 @@ def test_folder_levels():
     assert l2 == os.path.join("2020", "07")
 
 
+def _touch_media(dirpath, n, ext=".jpg"):
+    os.makedirs(dirpath, exist_ok=True)
+    for i in range(n):
+        open(os.path.join(dirpath, f"f{i}{ext}"), "wb").close()
+
+
+def test_count_approx_exact_for_small_tree(tmp_path):
+    _touch_media(tmp_path / "a", 3)
+    _touch_media(tmp_path / "b", 2)
+    open(tmp_path / "root.mp4", "wb").close()
+    res = ma.count_media_files_approx(str(tmp_path))
+    assert res["approximate"] is False
+    assert res["total"] == 6  # 3 + 2 + 1 en la raíz
+
+
+def test_count_approx_extrapolates_when_timeboxed(tmp_path):
+    # 4 subcarpetas de 5 archivos; time_budget=0 => procesa 1 y extrapola
+    for name in ("s1", "s2", "s3", "s4"):
+        _touch_media(tmp_path / name, 5)
+    res = ma.count_media_files_approx(str(tmp_path), time_budget=0.0)
+    assert res["approximate"] is True
+    assert res["scanned_subdirs"] == 1
+    assert res["total_subdirs"] == 4
+    assert res["total"] == 20  # 5 * 4 extrapolado
+
+
 # --------------------------- integración ------------------------------------
 
 def _make_jpeg(path, exif_date=None):
