@@ -16,7 +16,8 @@ router = APIRouter(prefix="/analysis", tags=["analysis"])
 async def create_analysis(req: AnalysisRequest):
     try:
         session_id = await analysis_service.start_analysis(
-            req.root_path, req.connection_type, req.max_depth, req.detect_duplicates)
+            req.root_path, req.connection_type, req.max_depth, req.detect_duplicates,
+            req.include_extensions, req.exclude_extensions)
     except MetadataAnalyzerError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e))
     return AnalysisStarted(session_id=session_id, root_path=req.root_path)

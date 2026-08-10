@@ -55,23 +55,27 @@ def _folder_levels(root: str, path: str) -> tuple[str, str]:
 
 async def start_analysis(root_path: str, connection_type: str = "local",
                          max_depth: int | None = None,
-                         detect_duplicates: bool = True) -> int:
+                         detect_duplicates: bool = True,
+                         include_extensions: list[str] | None = None,
+                         exclude_extensions: list[str] | None = None) -> int:
     """Valida, crea la sesión y lanza el análisis en background. Devuelve session_id."""
     real_root = validate_path(root_path, require_write=False, must_exist=True)
+    allowed_exts = ma.resolve_extensions(include_extensions, exclude_extensions)
     db = get_db()
     session_id = db.create_session(real_root, connection_type)
-    log.info(f"análisis iniciado session={session_id} root={real_root}")
+    log.info(f"análisis iniciado session={session_id} root={real_root} "
+             f"formatos={len(allowed_exts)}")
 
     loop = asyncio.get_running_loop()
     asyncio.create_task(
         asyncio.to_thread(_run_analysis_blocking, session_id, real_root,
-                          max_depth, detect_duplicates, loop)
+                          max_depth, detect_duplicates, allowed_exts, loop)
     )
     return session_id
 
 
 def _run_analysis_blocking(session_id: int, root: str, max_depth: int | None,
-                           detect_duplicates: bool, loop) -> None:
+                           detect_duplicates: bool, allowed_exts, loop) -> None:
     """Se ejecuta en un hilo (to_thread). Publica progreso de forma thread-safe."""
     db = get_db()
     channel = f"session:{session_id}"
@@ -84,7 +88,8 @@ def _run_analysis_blocking(session_id: int, root: str, max_depth: int | None,
     try:
         max_depth = max_depth if max_depth is not None else settings.max_walk_depth
         result = ma.analyze_folder(root, max_depth=max_depth,
-                                   progress_cb=progress_cb, keep_files=True)
+                                   progress_cb=progress_cb, keep_files=True,
+                                   allowed_exts=allowed_exts)
 
         # persistir ficheros + preparar duplicados
         rows = []

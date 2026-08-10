@@ -1,16 +1,21 @@
-"""api/config.py — Configuración y prueba de conexiones (local / Immich / OMV)."""
+"""api/config.py — Configuración, prueba de conexiones, navegación de carpetas y formatos."""
 
 from __future__ import annotations
 
+import os
+
 import bootstrap  # noqa: F401
+import formats as fmts
 import metadata_analyzer as ma
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, Query
 
 from core.config import settings
 from core.exceptions import MetadataAnalyzerError
 from core.logger import get_logger
-from core.security import validate_path
-from schemas.models import ConnectionTestRequest, ConnectionTestResult
+from core.security import in_allowlist, validate_path
+from schemas.models import (
+    BrowseEntry, BrowseResult, ConnectionTestRequest, ConnectionTestResult,
+)
 from services import immich_service, omv_service
 
 router = APIRouter(prefix="/config", tags=["config"])
@@ -19,11 +24,57 @@ log = get_logger("api.config")
 
 @router.get("/roots", response_model=dict)
 async def allowed_roots():
-    """Devuelve las raíces permitidas (allowlist) para orientar al usuario."""
+    """Raíces permitidas (allowlist) y disponibilidad de exiftool."""
     return {
         "allowed_media_roots": settings.allowed_media_roots,
         "exiftool_available": ma.exiftool_available(),
     }
+
+
+@router.get("/formats", response_model=dict)
+async def formats_catalog():
+    """Catálogo de formatos soportados, agrupado (image / raw / video)."""
+    return fmts.catalog()
+
+
+@router.get("/browse", response_model=BrowseResult)
+async def browse(path: str = Query("", description="Ruta a explorar; vacío = raíces permitidas")):
+    """
+    Lista las subcarpetas inmediatas de `path` para el selector de carpetas.
+    Sin `path` devuelve las raíces permitidas. Valida contra la allowlist y
+    rechaza rutas de sistema.
+    """
+    if not path:
+        return BrowseResult(
+            path="", parent=None,
+            dirs=[BrowseEntry(name=os.path.basename(r) or r, path=r)
+                  for r in settings.allowed_media_roots],
+        )
+    try:
+        real = validate_path(path, require_write=False, must_exist=True)
+    except MetadataAnalyzerError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e))
+
+    if not os.path.isdir(real):
+        raise HTTPException(status_code=400, detail="la ruta no es una carpeta")
+
+    dirs: list[BrowseEntry] = []
+    try:
+        with os.scandir(real) as it:
+            for entry in it:
+                try:
+                    if entry.is_dir(follow_symlinks=False) and not entry.name.startswith("."):
+                        dirs.append(BrowseEntry(name=entry.name,
+                                                path=os.path.join(real, entry.name)))
+                except OSError:
+                    continue
+    except PermissionError:
+        raise HTTPException(status_code=403, detail=f"sin permiso para listar {real}")
+
+    dirs.sort(key=lambda d: d.name.lower())
+    parent = os.path.dirname(real)
+    parent = parent if (parent != real and in_allowlist(parent)) else None
+    return BrowseResult(path=real, parent=parent, dirs=dirs)
 
 
 @router.post("/test", response_model=ConnectionTestResult)
@@ -36,15 +87,13 @@ async def test_connection(req: ConnectionTestRequest):
         if not ma.exiftool_available():
             return ConnectionTestResult(
                 ok=False, message="exiftool no está disponible en el backend")
-        # contar rápido algunos archivos multimedia
-        sample = 0
-        for _ in ma.iter_media_files(real, max_depth=2):
-            sample += 1
-            if sample >= 25:
-                break
+        # COMPROBACIÓN: contar PRIMERO el total de archivos multimedia (recursivo).
+        total = ma.count_media_files(real, max_depth=settings.max_walk_depth)
         return ConnectionTestResult(
-            ok=True, message=f"Carpeta accesible: {real}",
-            details={"sample_media_found": sample})
+            ok=True,
+            message=f"Carpeta accesible: {real} · {total} archivos multimedia detectados",
+            details={"root": real, "total_media_files": total},
+        )
 
     if req.type == "immich":
         res = await immich_service.test_connection(req.base_url or "", req.api_key or "")

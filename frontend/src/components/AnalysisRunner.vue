@@ -2,16 +2,27 @@
   <div class="space-y-6">
     <div class="card space-y-4">
       <div>
-        <label class="label">Carpeta a analizar</label>
-        <input v-model="rootPath" class="input" placeholder="/media/fotos" />
+        <FolderBrowser v-model="rootPath" label="Carpeta a analizar"
+                       :placeholder="roots[0] || '/media'" />
         <p v-if="roots.length" class="mt-1 text-xs text-slate-400">
-          Raíces permitidas: {{ roots.join(', ') }}
+          Raíces permitidas: {{ roots.join(', ') }} · el análisis es recursivo (todas las subcarpetas).
         </p>
       </div>
       <label class="flex items-center gap-2 text-sm text-slate-600">
         <input type="checkbox" v-model="detectDuplicates" class="rounded border-slate-300" />
         Detectar archivos duplicados
       </label>
+
+      <div>
+        <button type="button" class="text-sm text-brand-600 hover:underline"
+                @click="showFormats = !showFormats">
+          {{ showFormats ? '▾' : '▸' }} Formatos y omisiones
+        </button>
+        <div v-show="showFormats" class="mt-2">
+          <FormatSelector @update:include="includeExts = $event"
+                          @update:exclude="excludeExts = $event" />
+        </div>
+      </div>
 
       <AlertBox variant="info"
         message="El análisis es de solo lectura: no modifica ningún archivo. Genera un informe PDF y prepara los datos para una posible corrección posterior." />
@@ -45,10 +56,15 @@ import { api, ApiError } from '../api/client';
 import type { ProgressEvent } from '../types/api';
 import AlertBox from './AlertBox.vue';
 import AnalysisProgress from './AnalysisProgress.vue';
+import FolderBrowser from './FolderBrowser.vue';
+import FormatSelector from './FormatSelector.vue';
 import LoadingSpinner from './LoadingSpinner.vue';
 
 const rootPath = ref('');
 const detectDuplicates = ref(true);
+const showFormats = ref(false);
+const includeExts = ref<string[]>([]);
+const excludeExts = ref<string[]>([]);
 const roots = ref<string[]>([]);
 const running = ref(false);
 const finished = ref(false);
@@ -79,6 +95,8 @@ async function start() {
     const res = await api.startAnalysis({
       root_path: rootPath.value, connection_type: 'local',
       detect_duplicates: detectDuplicates.value,
+      include_extensions: includeExts.value.length ? includeExts.value : null,
+      exclude_extensions: excludeExts.value.length ? excludeExts.value : null,
     });
     sessionId.value = res.session_id;
   } catch (e) {

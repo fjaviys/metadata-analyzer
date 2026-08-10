@@ -101,7 +101,7 @@ def test_e2e_analysis_then_dryrun():
 
         db = get_db()
         sid = db.create_session(media, "local")
-        an._run_analysis_blocking(sid, media, None, True, loop)
+        an._run_analysis_blocking(sid, media, None, True, None, loop)
 
         s = db.get_session(sid)
         assert s["status"] == "completed"

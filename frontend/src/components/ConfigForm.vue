@@ -12,10 +12,10 @@
     <!-- LOCAL -->
     <template v-if="form.type === 'local'">
       <div>
-        <label class="label">Ruta de la carpeta de medios</label>
-        <input v-model="form.root_path" class="input" placeholder="/media/fotos" />
+        <FolderBrowser v-model="form.root_path" label="Ruta de la carpeta de medios"
+                       :placeholder="roots[0] || '/media'" />
         <p v-if="roots.length" class="mt-1 text-xs text-slate-400">
-          Raíces permitidas: {{ roots.join(', ') }}
+          Raíces permitidas: {{ roots.join(', ') }} · escribe una barra «/» para ver subcarpetas.
         </p>
       </div>
     </template>
@@ -66,6 +66,7 @@ import { api } from '../api/client';
 import type { ConnectionTestRequest, ConnectionType } from '../types/api';
 import AlertBox from './AlertBox.vue';
 import ConnectionTester from './ConnectionTester.vue';
+import FolderBrowser from './FolderBrowser.vue';
 
 const types: { key: ConnectionType; label: string }[] = [
   { key: 'local', label: 'Sistema de archivos' },

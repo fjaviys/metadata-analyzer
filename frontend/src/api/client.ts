@@ -1,9 +1,9 @@
 // Cliente de la API del Metadata Analyzer (REST + WebSocket).
 
 import type {
-  AnalysisRequest, AnalysisStarted, AnalyzedFile, ConnectionTestRequest,
+  AnalysisRequest, AnalysisStarted, AnalyzedFile, BrowseResult, ConnectionTestRequest,
   ConnectionTestResult, CorrectionRequest, CorrectionStarted, FolderNode,
-  ProgressEvent, SessionSummary,
+  FormatCatalog, ProgressEvent, SessionSummary,
 } from '../types/api';
 
 // Config de runtime inyectada por el servidor (window.__MA_CONFIG__ en MainLayout).
@@ -56,6 +56,11 @@ export const api = {
     request<ConnectionTestResult>('/config/test', {
       method: 'POST', body: JSON.stringify(body),
     }),
+
+  browse: (path: string) =>
+    request<BrowseResult>(`/config/browse?path=${encodeURIComponent(path)}`),
+
+  getFormats: () => request<FormatCatalog>('/config/formats'),
 
   // --- análisis ---
   startAnalysis: (body: AnalysisRequest) =>

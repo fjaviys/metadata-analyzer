@@ -26,18 +26,15 @@ from typing import Callable, Iterable, Optional
 
 import date_detector as dd
 from date_detector import Precision
+from formats import IMAGE_EXTS, VIDEO_EXTS, MEDIA_EXTS, resolve_extensions
 
 # --- Configuración -----------------------------------------------------------
 EXIFTOOL_BIN = os.getenv("EXIFTOOL_BIN", "exiftool")
 DATE_MIN_YEAR = int(os.getenv("DATE_MIN_YEAR", "1990"))
 DATE_MAX_YEAR_OFFSET = int(os.getenv("DATE_MAX_YEAR_OFFSET", "5"))
 
-PHOTO_EXTS = {".jpg", ".jpeg", ".png", ".heic", ".heif", ".tif", ".tiff",
-              ".webp", ".gif", ".bmp", ".dng", ".cr2", ".cr3", ".nef",
-              ".arw", ".rw2", ".orf", ".raf"}
-VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".3gp", ".mts",
-              ".m2ts", ".wmv", ".flv", ".webm", ".mpg", ".mpeg"}
-MEDIA_EXTS = PHOTO_EXTS | VIDEO_EXTS
+# Compatibilidad: PHOTO_EXTS es alias de las extensiones de imagen del catálogo.
+PHOTO_EXTS = IMAGE_EXTS
 
 # Orden de prioridad de tags de fecha (foto + vídeo).
 DATE_TAG_PRIORITY = [
@@ -307,8 +304,14 @@ def _fill_recommendation(fm: FileMetadata, by_name, by_path) -> None:
 
 # --- Recorrido de carpetas + estadísticas -----------------------------------
 
-def iter_media_files(root: str, max_depth: Optional[int] = None) -> Iterable[str]:
-    """Genera rutas de archivos multimedia bajo `root`, respetando max_depth."""
+def iter_media_files(root: str, max_depth: Optional[int] = None,
+                     allowed_exts: Optional[set[str]] = None) -> Iterable[str]:
+    """
+    Genera rutas de archivos multimedia bajo `root` (recursivo, todos los niveles),
+    respetando max_depth y filtrando por `allowed_exts` (por defecto, todas las
+    extensiones multimedia soportadas).
+    """
+    exts = allowed_exts if allowed_exts is not None else MEDIA_EXTS
     root = os.path.abspath(root)
     root_depth = root.rstrip(os.sep).count(os.sep)
     for dirpath, dirnames, filenames in os.walk(root):
@@ -317,8 +320,15 @@ def iter_media_files(root: str, max_depth: Optional[int] = None) -> Iterable[str
             if cur_depth >= max_depth:
                 dirnames[:] = []
         for name in filenames:
-            if os.path.splitext(name)[1].lower() in MEDIA_EXTS:
+            if os.path.splitext(name)[1].lower() in exts:
                 yield os.path.join(dirpath, name)
+
+
+def count_media_files(root: str, max_depth: Optional[int] = None,
+                      allowed_exts: Optional[set[str]] = None) -> int:
+    """Cuenta rápido los archivos multimedia bajo `root` (sin leer EXIF)."""
+    return sum(1 for _ in iter_media_files(root, max_depth=max_depth,
+                                           allowed_exts=allowed_exts))
 
 
 def _folder_levels(root: str, path: str) -> tuple[str, str]:
@@ -375,18 +385,28 @@ def analyze_folder(
     progress_cb: Optional[ProgressCb] = None,
     batch_size: int = 200,
     keep_files: bool = True,
+    allowed_exts: Optional[set[str]] = None,
 ) -> AnalysisResult:
     """
-    Analiza recursivamente una carpeta. Procesa en lotes con exiftool (rápido) y
-    emite progreso por `progress_cb` (dict con archivo actual, procesados/total,
-    inconsistencias acumuladas).
+    Analiza recursivamente una carpeta (todas las subcarpetas, cualquier nivel).
+    Procesa en lotes con exiftool (rápido) y emite progreso por `progress_cb` (dict
+    con archivo actual, procesados/total, inconsistencias acumuladas).
+
+    `allowed_exts` limita qué extensiones se procesan (por defecto, todas las
+    soportadas). El total de archivos se calcula PRIMERO, antes de leer EXIF.
     """
     root = os.path.abspath(root)
     result = AnalysisResult(root=root, started_at=datetime.now().isoformat())
 
-    all_files = list(iter_media_files(root, max_depth=max_depth))
+    all_files = list(iter_media_files(root, max_depth=max_depth, allowed_exts=allowed_exts))
     total = len(all_files)
     result.total_files = total
+
+    # Progreso inicial: total conocido antes de empezar a leer EXIF.
+    if progress_cb:
+        progress_cb({"current_file": "", "processed": 0, "total": total,
+                     "inconsistencies": 0, "needs_correction": 0,
+                     "percent": 0.0})
 
     lvl1_stats: dict[str, FolderStat] = defaultdict(lambda: FolderStat(folder=""))
     lvl2_stats: dict[str, FolderStat] = defaultdict(lambda: FolderStat(folder=""))
@@ -466,7 +486,8 @@ def analyze_folder(
 
 __all__ = [
     "FileMetadata", "AnalysisResult", "FolderStat",
-    "analyze_one", "analyze_folder", "iter_media_files",
+    "analyze_one", "analyze_folder", "iter_media_files", "count_media_files",
     "run_exiftool", "parse_exif_datetime", "exiftool_available",
+    "resolve_extensions",
     "PHOTO_EXTS", "VIDEO_EXTS", "MEDIA_EXTS", "DATE_TAG_PRIORITY",
 ]

@@ -49,6 +49,21 @@ class AnalysisRequest(BaseModel):
     connection_type: Literal["local", "immich", "omv"] = "local"
     max_depth: Optional[int] = None
     detect_duplicates: bool = True
+    include_extensions: Optional[list[str]] = Field(
+        None, description="Formatos a incluir (p. ej. ['.jpg','.mp4']); vacío = todos")
+    exclude_extensions: Optional[list[str]] = Field(
+        None, description="Extensiones a omitir (p. ej. ['.png'])")
+
+
+class BrowseEntry(BaseModel):
+    name: str
+    path: str
+
+
+class BrowseResult(BaseModel):
+    path: str
+    parent: Optional[str] = None
+    dirs: list[BrowseEntry] = Field(default_factory=list)
 
 
 class AnalysisStarted(BaseModel):

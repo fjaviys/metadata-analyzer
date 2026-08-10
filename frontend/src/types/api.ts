@@ -22,6 +22,25 @@ export interface AnalysisRequest {
   connection_type?: ConnectionType;
   max_depth?: number | null;
   detect_duplicates?: boolean;
+  include_extensions?: string[] | null;
+  exclude_extensions?: string[] | null;
+}
+
+export interface BrowseEntry {
+  name: string;
+  path: string;
+}
+
+export interface BrowseResult {
+  path: string;
+  parent: string | null;
+  dirs: BrowseEntry[];
+}
+
+export interface FormatCatalog {
+  image: string[];
+  raw: string[];
+  video: string[];
 }
 
 export interface AnalysisStarted {

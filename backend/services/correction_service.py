@@ -13,6 +13,7 @@ Seguridad:
 from __future__ import annotations
 
 import asyncio
+import os
 import uuid
 
 import bootstrap  # noqa: F401
@@ -29,18 +30,28 @@ from services.progress_hub import hub
 log = get_logger("correction")
 
 
+def _under_folder(path: str, folder: str) -> bool:
+    """True si `path` (archivo) está dentro de `folder` a CUALQUIER nivel."""
+    folder = folder.rstrip(os.sep)
+    # el archivo está bajo la carpeta si su directorio es la carpeta o un descendiente
+    return path == folder or path.startswith(folder + os.sep)
+
+
 def _candidates(session_id: int, subfolders: list[str], root: str) -> list[dict]:
+    """
+    Candidatos a corregir. Una subcarpeta seleccionada incluye TODAS sus
+    subcarpetas y archivos a cualquier nivel de profundidad (recursivo).
+    Sin selección → todos los archivos de la sesión que requieren corrección.
+    """
     db = get_db()
+    all_rows = db.get_files(session_id, needs_correction=True, limit=1_000_000)
     if not subfolders:
-        return db.get_files(session_id, needs_correction=True, limit=1_000_000)
-    # validar subcarpetas y filtrar por prefijo
+        return all_rows
     real_subs = validate_subfolders(root, subfolders)
     seen: dict[str, dict] = {}
-    for sub in real_subs:
-        for row in db.get_files(session_id, needs_correction=True,
-                                folder_prefix=None, limit=1_000_000):
-            if row["path"].startswith(sub):
-                seen[row["path"]] = row
+    for row in all_rows:
+        if any(_under_folder(row["path"], sub) for sub in real_subs):
+            seen[row["path"]] = row
     return list(seen.values())
 
 
