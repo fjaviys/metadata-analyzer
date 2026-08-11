@@ -154,10 +154,74 @@ _RE_YEAR_MONTH = re.compile(
 _RE_YEAR = re.compile(r"(?<!\d)(?P<y>(?:19|20)\d{2})(?!\d)")
 
 
-# --- Patrones de estructura de carpetas -------------------------------------
+# --- Patrones de estructura de carpetas (jerárquica: /AAAA/MM/DD/) -----------
 _RE_PATH_YMD = re.compile(r"/(?P<y>(?:19|20)\d{2})/(?P<mo>\d{1,2})/(?P<d>\d{1,2})(?:/|$)")
 _RE_PATH_YM = re.compile(r"/(?P<y>(?:19|20)\d{2})/(?P<mo>\d{1,2})(?:/|$)")
 _RE_PATH_Y = re.compile(r"/(?P<y>(?:19|20)\d{2})(?:/|$)")
+
+# --- Fecha embebida en UN SOLO nombre de carpeta -----------------------------
+# Orden europeo (día primero) por defecto para formatos ambiguos como 02102009.
+PREFER_DAY_FIRST = os.getenv("DATE_PREFER_DAY_FIRST", "1") not in ("0", "false", "False")
+
+# AAAA[sep]MM[sep]DD  (ISO / año primero): 2009-10-02, 20091002
+_C_YMD = re.compile(r"(?<!\d)(?P<y>(?:19|20)\d{2})[-._]?(?P<mo>\d{2})[-._]?(?P<d>\d{2})(?!\d)")
+# DD[sep]MM[sep]AAAA / MM[sep]DD[sep]AAAA (año al final): 02102009, 02-10-2009
+_C_DMY = re.compile(r"(?<!\d)(?P<a>\d{2})[-._]?(?P<b>\d{2})[-._]?(?P<y>(?:19|20)\d{2})(?!\d)")
+# AAAA[sep]MM (mes/año): 200910, 2009-10
+_C_YM = re.compile(r"(?<!\d)(?P<y>(?:19|20)\d{2})[-._]?(?P<mo>\d{2})(?!\d)")
+# MM[sep]AAAA (mes/año, europeo): 102009, 10-2009
+_C_MY = re.compile(r"(?<!\d)(?P<mo>\d{2})[-._]?(?P<y>(?:19|20)\d{2})(?!\d)")
+# AAAA aislado
+_C_Y = re.compile(r"(?<!\d)(?P<y>(?:19|20)\d{2})(?!\d)")
+
+
+def _detect_component(name: str, source: str = "path") -> DetectedDate:
+    """
+    Detecta una fecha embebida en un ÚNICO componente (nombre de carpeta), incluidos
+    formatos compactos y orden europeo día-primero. Devuelve el candidato de mayor
+    precisión que valide.
+    """
+    # FULL_DATE — ISO (año primero)
+    m = _C_YMD.search(name)
+    if m:
+        y, mo, d = int(m["y"]), int(m["mo"]), int(m["d"])
+        if _valid_ymd(y, mo, d):
+            return DetectedDate(Precision.FULL_DATE, 0.85, m.group(0), source,
+                                y, mo, d, notes=["fecha en carpeta (AAAA-MM-DD)"])
+    # FULL_DATE — día/mes primero, año al final (desambiguación europea)
+    m = _C_DMY.search(name)
+    if m:
+        a, b, y = int(m["a"]), int(m["b"]), int(m["y"])
+        primary = ("DD-MM", a, b) if PREFER_DAY_FIRST else ("MM-DD", b, a)
+        secondary = ("MM-DD", b, a) if PREFER_DAY_FIRST else ("DD-MM", a, b)
+        for label, day, month in (primary, secondary):
+            if _valid_ymd(y, month, day):
+                conf = 0.78 if label == primary[0] else 0.68
+                return DetectedDate(Precision.FULL_DATE, conf, m.group(0), source,
+                                    y, month, day,
+                                    notes=[f"fecha en carpeta ({label}-AAAA)"])
+    # YEAR_MONTH — AAAA-MM
+    m = _C_YM.search(name)
+    if m:
+        y, mo = int(m["y"]), int(m["mo"])
+        if _valid_year(y) and _valid_month(mo):
+            return DetectedDate(Precision.YEAR_MONTH, 0.6, m.group(0), source,
+                                y, mo, notes=["mes/año en carpeta (AAAA-MM)"])
+    # YEAR_MONTH — MM-AAAA (europeo)
+    m = _C_MY.search(name)
+    if m:
+        mo, y = int(m["mo"]), int(m["y"])
+        if _valid_year(y) and _valid_month(mo):
+            return DetectedDate(Precision.YEAR_MONTH, 0.55, m.group(0), source,
+                                y, mo, notes=["mes/año en carpeta (MM-AAAA)"])
+    # YEAR
+    m = _C_Y.search(name)
+    if m:
+        y = int(m["y"])
+        if _valid_year(y):
+            return DetectedDate(Precision.YEAR, 0.4, m.group(0), source, y,
+                                notes=["año en carpeta"])
+    return DetectedDate()
 
 
 def detect_from_filename(name: str) -> DetectedDate:
@@ -220,47 +284,57 @@ def detect_from_filename(name: str) -> DetectedDate:
 
 def detect_from_path(path: str) -> DetectedDate:
     """
-    Detecta la fecha por la ESTRUCTURA de carpetas contenedoras.
-    Usa el directorio (se ignora el propio nombre de archivo).
+    Detecta la fecha por la ESTRUCTURA de carpetas contenedoras. Combina:
+      1) jerarquía numérica /AAAA/MM/DD/, /AAAA/MM/, /AAAA/
+      2) fecha embebida en UN nombre de carpeta (p. ej. 02102009, 2009-10-02)
+    Se ignora el propio nombre de archivo. Devuelve el candidato de mayor precisión
+    (a igualdad, mayor confianza); si el año aparece en varias carpetas, refuerza
+    la confianza.
     """
     directory = os.path.dirname(path)
-    # normaliza a '/' y garantiza barras alrededor para los patrones
     norm = "/" + directory.replace("\\", "/").strip("/") + "/"
+    candidates: list[DetectedDate] = []
 
+    # 1) jerárquico
     m = _RE_PATH_YMD.search(norm)
     if m:
         y, mo, d = int(m["y"]), int(m["mo"]), int(m["d"])
         if _valid_ymd(y, mo, d):
-            return DetectedDate(
-                precision=Precision.FULL_DATE, confidence=0.85,
-                matched_text=m.group(0).strip("/"), source="path",
-                year=y, month=mo, day=d,
-                notes=["fecha derivada de estructura de carpetas"],
-            )
-
+            candidates.append(DetectedDate(
+                Precision.FULL_DATE, 0.85, m.group(0).strip("/"), "path",
+                y, mo, d, notes=["fecha en jerarquía de carpetas (AAAA/MM/DD)"]))
     m = _RE_PATH_YM.search(norm)
     if m:
         y, mo = int(m["y"]), int(m["mo"])
         if _valid_year(y) and _valid_month(mo):
-            return DetectedDate(
-                precision=Precision.YEAR_MONTH, confidence=0.65,
-                matched_text=m.group(0).strip("/"), source="path",
-                year=y, month=mo,
-                notes=["fecha derivada de estructura de carpetas"],
-            )
-
+            candidates.append(DetectedDate(
+                Precision.YEAR_MONTH, 0.65, m.group(0).strip("/"), "path",
+                y, mo, notes=["mes/año en jerarquía de carpetas (AAAA/MM)"]))
     m = _RE_PATH_Y.search(norm)
     if m:
         y = int(m["y"])
         if _valid_year(y):
-            return DetectedDate(
-                precision=Precision.YEAR, confidence=0.4,
-                matched_text=m.group(0).strip("/"), source="path",
-                year=y,
-                notes=["fecha derivada de estructura de carpetas"],
-            )
+            candidates.append(DetectedDate(
+                Precision.YEAR, 0.4, m.group(0).strip("/"), "path", y,
+                notes=["año en jerarquía de carpetas"]))
 
-    return DetectedDate()
+    # 2) por componente (fecha embebida en un solo nombre de carpeta)
+    for comp in (c for c in directory.replace("\\", "/").split("/") if c):
+        cand = _detect_component(comp)
+        if cand.is_valid:
+            candidates.append(cand)
+
+    if not candidates:
+        return DetectedDate()
+
+    best = max(candidates, key=lambda c: (int(c.precision), c.confidence))
+
+    # refuerzo: el año del mejor candidato aparece en varias carpetas
+    years = [c.year for c in candidates if c.year]
+    if best.year and years.count(best.year) >= 2:
+        best.confidence = min(1.0, best.confidence + 0.1)
+        best.notes.append("año confirmado por varias carpetas")
+    return best
 
 
 def detect(path: str) -> DetectedDate:

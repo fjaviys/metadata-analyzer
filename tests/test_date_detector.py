@@ -92,3 +92,61 @@ def test_combined_falls_back_to_path():
 def test_combined_none():
     r = dd.detect("/srv/media/misc/DSC_0001.jpg")
     assert r.precision == Precision.NONE
+
+
+# --- fecha embebida en un único nombre de carpeta ---------------------------
+
+def test_path_compact_ddmmyyyy():
+    # caso reportado: 2009/02102009 = 2 de octubre de 2009 (europeo)
+    r = dd.detect_from_path("/srv/media/2009/02102009/IMG_0006.JPG")
+    assert r.precision == Precision.FULL_DATE
+    assert (r.year, r.month, r.day) == (2009, 10, 2)
+    assert r.to_exif_string() == "2009:10:02 00:00:00"
+
+
+def test_path_compact_ddmmyyyy_full_flow():
+    r = dd.detect("/srv/media/2009/02102009/IMG_0006.JPG")
+    assert r.precision == Precision.FULL_DATE
+    assert r.to_exif_string() == "2009:10:02 00:00:00"
+
+
+def test_path_compact_iso_yyyymmdd():
+    r = dd.detect_from_path("/srv/media/2009/20091002/x.jpg")
+    assert r.precision == Precision.FULL_DATE
+    assert (r.year, r.month, r.day) == (2009, 10, 2)
+
+
+def test_path_dashed_daymonth_year():
+    r = dd.detect_from_path("/srv/media/02-10-2009/x.jpg")
+    assert r.precision == Precision.FULL_DATE
+    assert (r.year, r.month, r.day) == (2009, 10, 2)
+
+
+def test_path_iso_dashed_folder():
+    r = dd.detect_from_path("/srv/media/2020-07-02/x.jpg")
+    assert r.precision == Precision.FULL_DATE
+    assert (r.year, r.month, r.day) == (2020, 7, 2)
+
+
+def test_path_month_year_folder():
+    r = dd.detect_from_path("/srv/media/10-2009/x.jpg")
+    assert r.precision == Precision.YEAR_MONTH
+    assert (r.year, r.month) == (2009, 10)
+
+
+def test_path_disambiguation_month_gt_12():
+    # 25122009: 25 no es mes -> día=25, mes=12 (Navidad 2009)
+    r = dd.detect_from_path("/srv/media/25122009/x.jpg")
+    assert r.precision == Precision.FULL_DATE
+    assert (r.year, r.month, r.day) == (2009, 12, 25)
+
+
+def test_path_hierarchical_still_works():
+    r = dd.detect_from_path("/srv/media/2020/07/02/x.jpg")
+    assert r.precision == Precision.FULL_DATE
+    assert (r.year, r.month, r.day) == (2020, 7, 2)
+
+
+def test_path_non_date_8digits_no_false_positive():
+    r = dd.detect_from_path("/srv/media/12345678/x.jpg")
+    assert r.precision == Precision.NONE
