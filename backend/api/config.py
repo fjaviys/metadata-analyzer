@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 
 import bootstrap  # noqa: F401
+import date_detector as dd
 import formats as fmts
 import metadata_analyzer as ma
 from fastapi import APIRouter, HTTPException, Query
@@ -28,6 +29,7 @@ async def allowed_roots():
     return {
         "allowed_media_roots": settings.allowed_media_roots,
         "exiftool_available": ma.exiftool_available(),
+        "detector_version": dd.DETECTOR_VERSION,
     }
 
 

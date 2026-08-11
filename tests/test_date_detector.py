@@ -150,3 +150,55 @@ def test_path_hierarchical_still_works():
 def test_path_non_date_8digits_no_false_positive():
     r = dd.detect_from_path("/srv/media/12345678/x.jpg")
     assert r.precision == Precision.NONE
+
+
+# --- combinación nombre+carpeta y prevalencia del nombre --------------------
+
+def test_name_daymonth_plus_folder_year():
+    # IMGRANDOM_0209 dentro de 2009/ -> 2009-09-02 (día 02, mes 09 europeo)
+    r = dd.detect("/srv/media/2009/IMGRANDOM_0209.jpg")
+    assert r.precision == Precision.FULL_DATE
+    assert (r.year, r.month, r.day) == (2009, 9, 2)
+    assert r.source == "filename+path"
+
+
+def test_name_daymonth_plus_folder_year_month():
+    # IMGRANDOM_0208 dentro de 2009/08/ -> 2009-08-02 (mes confirmado)
+    r = dd.detect("/srv/media/2009/08/IMGRANDOM_0208.jpg")
+    assert r.precision == Precision.FULL_DATE
+    assert (r.year, r.month, r.day) == (2009, 8, 2)
+    assert any("mes confirmado" in n for n in r.notes)
+
+
+def test_name_full_iso_prevails_over_folder():
+    # el nombre con fecha completa prevalece aunque la carpeta diga otra cosa
+    r = dd.detect("/srv/media/1999/IMGRANDOM_20060126.jpg")
+    assert r.precision == Precision.FULL_DATE
+    assert (r.year, r.month, r.day) == (2006, 1, 26)
+    assert r.source == "filename"
+
+
+def test_name_yymmdd_two_digit_year():
+    r = dd.detect_from_filename("IMGRANDOM_020926.jpg")
+    assert r.precision == Precision.FULL_DATE
+    assert (r.year, r.month, r.day) == (2002, 9, 26)
+
+
+def test_name_dmy_full_with_separators():
+    r = dd.detect_from_filename("foto_02-10-2009.jpg")
+    assert r.precision == Precision.FULL_DATE
+    assert (r.year, r.month, r.day) == (2009, 10, 2)
+
+
+def test_daymonth_helper_rejects_non_dates():
+    # 1080 no es una fecha (mes 80 / día 80) -> None
+    assert dd.detect_daymonth_from_filename("DSC_1080.jpg") is None
+    # 0209 sí (día 02, mes 09)
+    got = dd.detect_daymonth_from_filename("IMG_0209.jpg")
+    assert got and (got["day"], got["month"]) == (2, 9)
+
+
+def test_daymonth_not_used_without_folder_year():
+    # sin año en carpeta ni nombre, el día+mes suelto no genera fecha completa
+    r = dd.detect("/media/sinfecha/IMG_0209.jpg")
+    assert r.precision == Precision.NONE

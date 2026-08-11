@@ -3,6 +3,13 @@
     <LoadingSpinner v-if="loading" label="Cargando resultados…" />
 
     <template v-else-if="summary">
+      <AlertBox v-if="needsReanalyze" variant="warning" title="Detección mejorada disponible">
+        Esta sesión se analizó con una versión anterior del detector de fechas. Para
+        aprovechar las mejoras (fechas en nombres/carpetas, formatos compactos…),
+        <a class="font-medium underline" :href="`/analysis?root=${encodeURIComponent(summary.root)}`">vuelve a analizar esta carpeta</a>
+        antes de corregir.
+      </AlertBox>
+
       <div class="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 class="text-xl font-semibold text-slate-800">Resultados · sesión #{{ summary.id }}</h1>
@@ -53,6 +60,10 @@ const summary = ref<SessionSummary | null>(null);
 const tree = ref<FolderNode[]>([]);
 const loading = ref(true);
 const error = ref('');
+const currentDetector = ref(0);
+
+const needsReanalyze = computed(() =>
+  currentDetector.value > 0 && (summary.value?.detector_version ?? 0) < currentDetector.value);
 
 const reportUrl = computed(() => api.reportUrl(props.sessionId));
 const l1Items = computed(() => tree.value.map((n) => ({
@@ -66,6 +77,7 @@ onMounted(async () => {
   try {
     summary.value = await api.getSummary(props.sessionId);
     tree.value = (await api.getTree(props.sessionId)).tree;
+    try { currentDetector.value = (await api.getRoots()).detector_version; } catch { /* ignore */ }
   } catch (e) {
     error.value = String(e);
   } finally {

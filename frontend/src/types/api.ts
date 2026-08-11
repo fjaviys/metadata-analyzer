@@ -64,6 +64,7 @@ export interface SessionSummary {
   inconsistent: number;
   needs_correction: number;
   duplicates_count: number;
+  detector_version?: number;
   report_path?: string | null;
 }
 

@@ -50,7 +50,8 @@ export class ApiError extends Error {
 export const api = {
   // --- config / conexiones ---
   getRoots: () =>
-    request<{ allowed_media_roots: string[]; exiftool_available: boolean }>('/config/roots'),
+    request<{ allowed_media_roots: string[]; exiftool_available: boolean;
+              detector_version: number }>('/config/roots'),
 
   testConnection: (body: ConnectionTestRequest) =>
     request<ConnectionTestResult>('/config/test', {

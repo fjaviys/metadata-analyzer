@@ -18,6 +18,7 @@ from collections import defaultdict
 from datetime import datetime
 
 import bootstrap  # noqa: F401
+import date_detector as dd
 import metadata_analyzer as ma
 import report_generator as rg
 
@@ -62,7 +63,8 @@ async def start_analysis(root_path: str, connection_type: str = "local",
     real_root = validate_path(root_path, require_write=False, must_exist=True)
     allowed_exts = ma.resolve_extensions(include_extensions, exclude_extensions)
     db = get_db()
-    session_id = db.create_session(real_root, connection_type)
+    session_id = db.create_session(real_root, connection_type,
+                                   detector_version=dd.DETECTOR_VERSION)
     log.info(f"análisis iniciado session={session_id} root={real_root} "
              f"formatos={len(allowed_exts)}")
 

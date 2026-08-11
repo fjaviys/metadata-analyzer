@@ -78,10 +78,16 @@ onMounted(async () => {
     const r = await api.getRoots();
     roots.value = r.allowed_media_roots;
   } catch { /* ignore */ }
-  const stored = localStorage.getItem('ma_config');
-  if (stored) {
-    const cfg = JSON.parse(stored);
-    if (cfg.type === 'local' && cfg.root_path) rootPath.value = cfg.root_path;
+  // prioridad: ?root= de la URL (enlace "re-analizar") > config guardada > 1ª raíz
+  const urlRoot = new URL(location.href).searchParams.get('root');
+  if (urlRoot) {
+    rootPath.value = urlRoot;
+  } else {
+    const stored = localStorage.getItem('ma_config');
+    if (stored) {
+      const cfg = JSON.parse(stored);
+      if (cfg.type === 'local' && cfg.root_path) rootPath.value = cfg.root_path;
+    }
   }
   if (!rootPath.value && roots.value.length) rootPath.value = roots.value[0];
 });

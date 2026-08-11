@@ -243,8 +243,9 @@ def analyze_one(path: str, exif_tags: Optional[dict] = None) -> FileMetadata:
     # --- inconsistencias entre fuentes ---
     fm.inconsistencies.extend(_detect_inconsistencies(fm, by_name, by_path))
 
-    # --- recomendación de corrección ---
-    _fill_recommendation(fm, by_name, by_path)
+    # --- recomendación de corrección (detección combinada nombre+carpeta) ---
+    combined = dd.detect(path)
+    _fill_recommendation(fm, combined)
 
     return fm
 
@@ -273,15 +274,13 @@ def _detect_inconsistencies(fm: FileMetadata, by_name, by_path) -> list[str]:
     return issues
 
 
-def _fill_recommendation(fm: FileMetadata, by_name, by_path) -> None:
+def _fill_recommendation(fm: FileMetadata, best) -> None:
     """
     Determina la mejor fecha propuesta y si el archivo necesita corrección.
-    Prioridad de fuente de referencia: nombre (mayor precisión) > carpeta.
+    `best` es la detección combinada (nombre+carpeta) de date_detector.detect().
     La fecha EXIF se considera válida solo si no es corrupta y es fiable.
     """
-    # Mejor candidato entre nombre y carpeta
-    cands = [c for c in (by_name, by_path) if c.is_valid]
-    best = max(cands, key=lambda c: (int(c.precision), c.confidence)) if cands else None
+    best = best if (best is not None and best.is_valid) else None
 
     exif_ok = fm.has_exif_date and not fm.is_corrupt
 

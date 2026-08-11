@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS analysis_sessions (
     inconsistent      INTEGER DEFAULT 0,
     needs_correction  INTEGER DEFAULT 0,
     duplicates_count  INTEGER DEFAULT 0,
+    detector_version  INTEGER DEFAULT 0,
     report_path       TEXT,
     summary_json      TEXT,
     error             TEXT
@@ -163,18 +164,26 @@ class DatabaseManager:
     def init_db(self) -> None:
         with self._tx() as c:
             c.executescript(_SCHEMA)
+            self._migrate(c)
             c.execute(
                 "INSERT OR REPLACE INTO schema_meta(key, value) VALUES('version', ?)",
                 (str(SCHEMA_VERSION),),
             )
 
+    def _migrate(self, c) -> None:
+        """Migraciones ligeras para BD ya existentes (añadir columnas nuevas)."""
+        cols = {r["name"] for r in c.execute("PRAGMA table_info(analysis_sessions)")}
+        if "detector_version" not in cols:
+            c.execute("ALTER TABLE analysis_sessions ADD COLUMN detector_version INTEGER DEFAULT 0")
+
     # ------------------------------------------------------------------ sessions
-    def create_session(self, root: str, connection_type: str = "local") -> int:
+    def create_session(self, root: str, connection_type: str = "local",
+                       detector_version: int = 0) -> int:
         with self._tx() as c:
             cur = c.execute(
-                "INSERT INTO analysis_sessions(root, connection_type, status, started_at) "
-                "VALUES(?,?,?,?)",
-                (root, connection_type, "running", _now()),
+                "INSERT INTO analysis_sessions(root, connection_type, status, "
+                "started_at, detector_version) VALUES(?,?,?,?,?)",
+                (root, connection_type, "running", _now(), detector_version),
             )
             return int(cur.lastrowid)
 

@@ -1,5 +1,7 @@
 """Tests de database_manager: sesiones, ficheros, duplicados, correcciones, árbol."""
 
+import sqlite3
+
 from database_manager import DatabaseManager
 
 
@@ -21,6 +23,29 @@ def _db(tmp_path):
     db = DatabaseManager(str(tmp_path / "test.db"))
     db.init_db()
     return db
+
+
+def test_detector_version_stored(tmp_path):
+    db = _db(tmp_path)
+    sid = db.create_session("/srv/media", "local", detector_version=3)
+    assert db.get_session(sid)["detector_version"] == 3
+
+
+def test_migration_adds_detector_version(tmp_path):
+    # BD "antigua" sin la columna detector_version
+    path = str(tmp_path / "old.db")
+    con = sqlite3.connect(path)
+    con.execute("""CREATE TABLE analysis_sessions(
+        id INTEGER PRIMARY KEY AUTOINCREMENT, root TEXT NOT NULL,
+        connection_type TEXT, status TEXT, started_at TEXT)""")
+    con.execute("INSERT INTO analysis_sessions(root, status, started_at) VALUES('/x','completed','t')")
+    con.commit(); con.close()
+
+    db = DatabaseManager(path)
+    db.init_db()  # debe migrar añadiendo la columna
+    cols = {r["name"] for r in db.conn.execute("PRAGMA table_info(analysis_sessions)")}
+    assert "detector_version" in cols
+    assert db.get_session(1)["detector_version"] == 0  # sesión antigua -> 0
 
 
 def test_session_lifecycle(tmp_path):
