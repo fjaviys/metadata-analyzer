@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import bootstrap  # noqa: F401
+import metadata_analyzer as ma
 import pattern_parser as pp
 from fastapi import APIRouter, HTTPException, Query
 
 from core.exceptions import ConfirmationRequiredError, MetadataAnalyzerError
 from core.security import validate_subfolders
 from database.db import get_db
-from schemas.models import CorrectionRequest, CorrectionStarted, OverrideRequest
+from schemas.models import (
+    CorrectionRequest, CorrectionStarted, FileOverrideRequest, OverrideRequest,
+)
 from services import correction_service
 from services.correction_service import _under_folder, override_correction
 
@@ -95,6 +98,86 @@ async def list_overrides(session_id: int):
 async def delete_override(override_id: int):
     get_db().delete_override(override_id)
     return {"deleted": override_id}
+
+
+# --- Decisiones por archivo -------------------------------------------------
+
+@router.get("/date-options")
+async def date_options(session_id: int, path: str):
+    """Opciones de fecha recomendadas para UN archivo, con su valor (ejemplo)."""
+    db = get_db()
+    row = db.get_file(session_id, path)
+    if not row:
+        raise HTTPException(status_code=404, detail="archivo no encontrado en la sesión")
+
+    options: list[dict] = []
+    seen: set[str] = set()
+
+    def add(source: str, label: str, value, precision):
+        if not value or value in seen:
+            return
+        seen.add(value)
+        options.append({"source": source, "label": label, "value": value,
+                        "precision": precision})
+
+    add("recommended", "Recomendada (automática)",
+        row.get("recommended_date"), row.get("recommended_precision"))
+    add("exif", "EXIF del archivo", row.get("exif_date"),
+        "DATETIME" if row.get("exif_date") else None)
+    add("filename", "Fecha del nombre", row.get("filename_date"), None)
+    add("path", "Fecha de la carpeta", row.get("path_date"), None)
+    for preset in pp.PRESETS:
+        det = pp.resolve(path, preset["pattern"], preset.get("source", "auto"))
+        if det and det.is_valid:
+            add("preset:" + preset["key"], preset["label"],
+                det.to_exif_string(), det.precision.label)
+
+    return {"path": path, "media_type": row.get("media_type"),
+            "exif": row.get("exif_date"),
+            "recommended": row.get("recommended_date"),
+            "needs_correction": bool(row.get("needs_correction")),
+            "options": options}
+
+
+@router.post("/file-overrides")
+async def create_file_override(req: FileOverrideRequest):
+    db = get_db()
+    row = db.get_file(req.session_id, req.path)
+    if not row:
+        raise HTTPException(status_code=404, detail="archivo no encontrado en la sesión")
+
+    new_value = None
+    precision = req.precision
+    if req.kind == "date_value":
+        if not req.value or ma.parse_exif_datetime(req.value) is None:
+            raise HTTPException(status_code=400,
+                                detail="valor de fecha inválido (usa 'AAAA:MM:DD HH:MM:SS')")
+        new_value = req.value
+        precision = precision or "FULL_DATE"
+    elif req.kind == "date_pattern":
+        if not req.value:
+            raise HTTPException(status_code=400, detail="falta el patrón")
+        det = pp.resolve(req.path, req.value, "auto")
+        if not (det and det.is_valid):
+            raise HTTPException(status_code=400,
+                                detail="el patrón no produce una fecha válida para este archivo")
+        new_value = det.to_exif_string()
+        precision = det.precision.label
+
+    oid = db.set_file_override(req.session_id, req.path, req.kind, req.value, precision)
+    return {"id": oid, "path": req.path, "kind": req.kind,
+            "new": new_value, "precision": precision}
+
+
+@router.get("/file-overrides")
+async def list_file_overrides(session_id: int):
+    return {"file_overrides": get_db().get_file_overrides(session_id)}
+
+
+@router.delete("/file-overrides")
+async def delete_file_override(session_id: int, path: str):
+    get_db().delete_file_override(session_id, path)
+    return {"deleted": path}
 
 
 @router.get("/{run_id}")

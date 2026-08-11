@@ -13,7 +13,7 @@
       </div>
       <div class="flex items-center gap-3">
         <label class="flex items-center gap-2 text-sm text-slate-600">
-          <input type="checkbox" v-model="onlyChanges" @change="reload(0)"
+          <input type="checkbox" v-model="onlyChanges" @change="reload"
                  class="rounded border-slate-300" />
           Solo cambios
         </label>
@@ -23,58 +23,17 @@
       </div>
     </div>
 
+    <AlertBox v-if="changed" variant="info"
+      message="Has ajustado la fecha de algún archivo. Vuelve a simular (o ejecuta la corrección real) para aplicar tus cambios." />
+
     <LoadingSpinner v-if="loading" label="Cargando resultados…" />
+    <p v-else-if="rows.length === 0" class="py-4 text-center text-sm text-slate-400">
+      Sin filas.
+    </p>
+    <CorrectionTree v-else :session-id="sessionId" :root="root" :rows="rows"
+                    @changed="changed = true; emit('changed')" />
 
-    <div v-else class="overflow-x-auto">
-      <table class="w-full text-left text-sm">
-        <thead class="border-b border-slate-200 text-xs uppercase text-slate-500">
-          <tr>
-            <th class="py-2 pr-3">Archivo</th>
-            <th class="py-2 pr-3">Fecha anterior</th>
-            <th class="py-2 pr-3"></th>
-            <th class="py-2 pr-3">Fecha {{ isDryRun ? 'propuesta' : 'nueva' }}</th>
-            <th class="py-2 pr-3">Origen</th>
-            <th class="py-2 pr-3">Estado</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="r in rows" :key="r.id" class="border-b border-slate-100">
-            <td class="max-w-xs truncate py-2 pr-3 text-slate-700" :title="r.path">
-              {{ short(r.path) }}
-            </td>
-            <td class="whitespace-nowrap py-2 pr-3 font-mono text-xs text-slate-500">
-              {{ r.original_value || '—' }}
-            </td>
-            <td class="py-2 pr-1 text-slate-300">→</td>
-            <td class="whitespace-nowrap py-2 pr-3 font-mono text-xs"
-                :class="r.correction_type === 'cleanup' ? 'text-red-600' : 'text-slate-800'">
-              {{ r.new_value || '—' }}
-            </td>
-            <td class="py-2 pr-3">
-              <span class="rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
-                {{ r.source || r.correction_type }}
-                <template v-if="r.precision"> · {{ r.precision }}</template>
-              </span>
-            </td>
-            <td class="py-2 pr-3">
-              <span :class="badgeClass(r.status)">{{ statusLabel(r.status) }}</span>
-              <span v-if="r.error" class="ml-1 text-xs text-red-500" :title="r.error">⚠</span>
-            </td>
-          </tr>
-          <tr v-if="rows.length === 0">
-            <td colspan="6" class="py-4 text-center text-slate-400">Sin filas.</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-
-    <div class="mt-3 flex items-center justify-between text-sm text-slate-500">
-      <span>{{ total }} fila(s)</span>
-      <div class="flex gap-2">
-        <button class="btn-ghost" :disabled="offset === 0" @click="reload(offset - limit)">Anterior</button>
-        <button class="btn-ghost" :disabled="offset + limit >= total" @click="reload(offset + limit)">Siguiente</button>
-      </div>
-    </div>
+    <p class="mt-3 text-xs text-slate-500">{{ rows.length }} archivo(s) mostrados.</p>
   </div>
 </template>
 
@@ -82,17 +41,18 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { api } from '../api/client';
 import type { CorrectionRow } from '../types/api';
+import AlertBox from './AlertBox.vue';
+import CorrectionTree from './CorrectionTree.vue';
 import LoadingSpinner from './LoadingSpinner.vue';
 
-const props = defineProps<{ runId: string }>();
+const props = defineProps<{ runId: string; sessionId: number; root?: string }>();
+const emit = defineEmits<{ (e: 'changed'): void }>();
 
 const rows = ref<CorrectionRow[]>([]);
 const stats = ref<Record<string, number>>({});
-const total = ref(0);
 const loading = ref(false);
 const onlyChanges = ref(true);
-const limit = 50;
-const offset = ref(0);
+const changed = ref(false);
 
 const isDryRun = computed(() => rows.value[0]?.dry_run === 1
   || (stats.value['dry-run'] ?? 0) > 0);
@@ -103,38 +63,21 @@ const LABELS: Record<string, string> = {
 };
 const statusLabel = (s: string) => LABELS[s] ?? s;
 
-function badgeClass(status: string) {
-  const map: Record<string, string> = {
-    'dry-run': 'bg-blue-50 text-blue-700',
-    verified: 'bg-green-50 text-green-700',
-    failed: 'bg-red-50 text-red-700',
-    reverted: 'bg-amber-50 text-amber-700',
-    skipped: 'bg-slate-100 text-slate-500',
-  };
-  return `rounded px-2 py-0.5 text-xs ${map[status] ?? 'bg-slate-100 text-slate-600'}`;
-}
-
-function short(p: string) {
-  return p.split('/').slice(-3).join('/');
-}
-
-async function reload(newOffset = offset.value) {
-  offset.value = Math.max(0, newOffset);
+async function reload() {
   loading.value = true;
   try {
+    // el árbol carga todas las filas del run (hasta un tope alto)
     const r = await api.getCorrectionRun(props.runId, {
-      only_changes: onlyChanges.value, limit, offset: offset.value,
+      only_changes: onlyChanges.value, limit: 5000, offset: 0,
     });
     rows.value = r.corrections;
     stats.value = r.stats;
-    total.value = r.total;
   } finally {
     loading.value = false;
   }
 }
 
 async function exportCsv() {
-  // descarga TODAS las filas del filtro actual
   const all = await api.getCorrectionRun(props.runId, {
     only_changes: onlyChanges.value, limit: 5000, offset: 0,
   });
@@ -153,6 +96,6 @@ async function exportCsv() {
   URL.revokeObjectURL(url);
 }
 
-watch(() => props.runId, () => reload(0));
-onMounted(() => reload(0));
+watch(() => props.runId, reload);
+onMounted(reload);
 </script>

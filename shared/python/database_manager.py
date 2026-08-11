@@ -119,6 +119,18 @@ CREATE TABLE IF NOT EXISTS path_overrides (
     FOREIGN KEY (session_id) REFERENCES analysis_sessions(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS file_overrides (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER NOT NULL,
+    path       TEXT NOT NULL,
+    kind       TEXT NOT NULL,          -- date_value | date_pattern | skip
+    value      TEXT,
+    precision  TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (session_id) REFERENCES analysis_sessions(id) ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_fileov_path    ON file_overrides(session_id, path);
 CREATE INDEX IF NOT EXISTS idx_overrides_session   ON path_overrides(session_id);
 CREATE INDEX IF NOT EXISTS idx_files_session      ON analyzed_files(session_id);
 CREATE INDEX IF NOT EXISTS idx_files_needs        ON analyzed_files(session_id, needs_correction);
@@ -445,6 +457,46 @@ class DatabaseManager:
     def delete_override(self, override_id: int) -> None:
         with self._tx() as c:
             c.execute("DELETE FROM path_overrides WHERE id=?", (override_id,))
+
+    # ---- overrides por archivo (decisión individual) ----
+    def set_file_override(self, session_id: int, path: str, kind: str,
+                          value: Optional[str] = None,
+                          precision: Optional[str] = None) -> int:
+        with self._tx() as c:
+            c.execute("DELETE FROM file_overrides WHERE session_id=? AND path=?",
+                      (session_id, path))
+            cur = c.execute(
+                "INSERT INTO file_overrides(session_id, path, kind, value, precision, created_at) "
+                "VALUES(?,?,?,?,?,?)",
+                (session_id, path, kind, value, precision, _now()))
+            return int(cur.lastrowid)
+
+    def get_file_overrides(self, session_id: int) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT * FROM file_overrides WHERE session_id=? ORDER BY path",
+            (session_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_file_override(self, session_id: int, path: str) -> Optional[dict]:
+        r = self.conn.execute(
+            "SELECT * FROM file_overrides WHERE session_id=? AND path=?",
+            (session_id, path)).fetchone()
+        return dict(r) if r else None
+
+    def delete_file_override(self, session_id: int, path: str) -> None:
+        with self._tx() as c:
+            c.execute("DELETE FROM file_overrides WHERE session_id=? AND path=?",
+                      (session_id, path))
+
+    def get_file(self, session_id: int, path: str) -> Optional[dict]:
+        r = self.conn.execute(
+            "SELECT * FROM analyzed_files WHERE session_id=? AND path=? LIMIT 1",
+            (session_id, path)).fetchone()
+        if not r:
+            return None
+        d = dict(r)
+        d["inconsistencies"] = json.loads(d.get("inconsistencies") or "[]")
+        return d
 
     def correction_stats(self, run_id: str) -> dict:
         rows = self.conn.execute(

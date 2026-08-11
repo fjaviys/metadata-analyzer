@@ -58,7 +58,9 @@
       <AnalysisProgress v-if="runId" kind="run" :id="runId" :key="runId"
                         @done="onRunDone" />
 
-      <CorrectionResults v-if="finishedRunId" :run-id="finishedRunId" :key="'res-' + finishedRunId" />
+      <CorrectionResults v-if="finishedRunId" :run-id="finishedRunId"
+                         :session-id="sessionId" :root="sessionRoot"
+                         @changed="overridesChanged = true" :key="'res-' + finishedRunId" />
     </template>
   </div>
 </template>

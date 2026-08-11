@@ -78,6 +78,15 @@ digiKam, etc. (no solo un tag), la corrección escribe un conjunto amplio:
 Se usa `exiftool -m` para ignorar avisos de tags no aplicables a un formato concreto
 sin abortar. La verificación re-lee los tags relevantes al tipo de medio.
 
+## Decisión por archivo (override individual)
+
+En el árbol de resultados, cada archivo admite una decisión propia que tiene
+**prioridad sobre el override de carpeta y sobre la recomendación del análisis**:
+mantener la recomendación, elegir una de las opciones sugeridas (con su valor de
+ejemplo para ESE archivo), introducir un patrón manual, o marcar "no cambiar"
+(exclusión explícita). Es idempotente igual que el resto del motor: si el EXIF ya
+coincide con el valor elegido, no se reescribe.
+
 ## Rescate de archivos no marcados por el análisis
 
 Un patrón manual (override) aplicado a una carpeta corrige **todos** sus archivos a

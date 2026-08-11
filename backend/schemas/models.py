@@ -123,6 +123,14 @@ class OverrideRequest(BaseModel):
     source: str = Field("auto", description="Dónde leer la fecha: auto|filename|folder|path")
 
 
+class FileOverrideRequest(BaseModel):
+    session_id: int
+    path: str
+    kind: Literal["date_value", "date_pattern", "skip"]
+    value: Optional[str] = Field(None, description="Fecha EXIF 'AAAA:MM:DD HH:MM:SS' o patrón")
+    precision: Optional[str] = None
+
+
 class ApiError(BaseModel):
     error: str
     detail: Optional[str] = None

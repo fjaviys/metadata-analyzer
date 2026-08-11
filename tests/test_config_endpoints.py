@@ -128,6 +128,85 @@ def test_override_idempotent_when_exif_matches(tmp_path):
     assert correction_service.build_candidates(sid, [], root) == []
 
 
+def _seed_file(db, root, sub, name, **kw):
+    os.makedirs(os.path.join(root, sub), exist_ok=True)
+    p = os.path.join(root, sub, name)
+    open(p, "wb").close()
+    row = {"path": p, "media_type": "photo", "needs_correction": kw.get("needs", True),
+           "exif_date": kw.get("exif"), "exif_date_tag": "DateTimeOriginal",
+           "has_exif_date": kw.get("exif") is not None,
+           "filename_date": kw.get("fname"), "path_date": kw.get("pdate"),
+           "recommended_date": kw.get("rec"), "recommended_precision": kw.get("prec"),
+           "recommended_source": "path", "inconsistencies": []}
+    db.insert_file(db_sid_cache[0], row, sub.split("/")[0], sub)
+    return p
+
+
+db_sid_cache = [0]
+
+
+def test_date_options_lists_candidates(tmp_path):
+    db = get_db()
+    root = str(tmp_path)
+    sid = db.create_session(root, "local"); db_sid_cache[0] = sid
+    p = _seed_file(db, root, "2009/02102009", "IMG_20081014.jpg",
+                   exif="2008:10:14 12:00:00", rec="2009:01:01 00:00:00", prec="YEAR")
+    r = client.get("/api/corrections/date-options", params={"session_id": sid, "path": p})
+    assert r.status_code == 200
+    opts = r.json()["options"]
+    values = {o["value"] for o in opts}
+    # EXIF, recomendada (año) y el patrón de carpeta DDMMAAAA (2009-10-02) y del nombre ISO
+    assert "2008:10:14 12:00:00" in values
+    assert "2009:10:02 00:00:00" in values  # de 02102009 (DDMMAAAA)
+    assert "2008:10:14 00:00:00" in values  # del nombre IMG_20081014
+
+
+def test_file_override_value_and_skip(tmp_path):
+    db = get_db()
+    root = str(tmp_path)
+    sid = db.create_session(root, "local"); db_sid_cache[0] = sid
+    p = _seed_file(db, root, "2009", "IMG_x.jpg", exif="2008:10:14 12:00:00",
+                   rec="2009:01:01 00:00:00", prec="YEAR")
+
+    # fijar una fecha concreta para ese archivo
+    r = client.post("/api/corrections/file-overrides", json={
+        "session_id": sid, "path": p, "kind": "date_value",
+        "value": "2009:10:02 00:00:00", "precision": "FULL_DATE"})
+    assert r.status_code == 200 and r.json()["new"] == "2009:10:02 00:00:00"
+    cands = correction_service.build_candidates(sid, [], root)
+    assert cands[0]["recommended_date"] == "2009:10:02 00:00:00"
+    assert cands[0]["recommended_source"] == "file-override"
+
+    # cambiar a "no cambiar" (skip) -> excluido de candidatos
+    client.post("/api/corrections/file-overrides", json={
+        "session_id": sid, "path": p, "kind": "skip"})
+    assert correction_service.build_candidates(sid, [], root) == []
+
+    # borrar el override -> vuelve al comportamiento del análisis (needs_correction)
+    client.delete("/api/corrections/file-overrides", params={"session_id": sid, "path": p})
+    assert client.get("/api/corrections/file-overrides", params={"session_id": sid}).json()["file_overrides"] == []
+    assert len(correction_service.build_candidates(sid, [], root)) == 1
+
+
+def test_file_override_pattern_resolves(tmp_path):
+    db = get_db()
+    root = str(tmp_path)
+    sid = db.create_session(root, "local"); db_sid_cache[0] = sid
+    p = _seed_file(db, root, "misc", "IMG_20081014.jpg", exif="2000:01:01 00:00:00",
+                   needs=True, rec="2000:01:01 00:00:00", prec="DATETIME")
+    # patrón AAAAMMDD sobre el nombre -> 2008:10:14
+    r = client.post("/api/corrections/file-overrides", json={
+        "session_id": sid, "path": p, "kind": "date_pattern", "value": "AAAAMMDD"})
+    assert r.status_code == 200 and r.json()["new"] == "2008:10:14 00:00:00"
+    cands = correction_service.build_candidates(sid, [], root)
+    assert cands[0]["recommended_date"] == "2008:10:14 00:00:00"
+
+    # patrón que NO resuelve para este archivo -> 400
+    bad = client.post("/api/corrections/file-overrides", json={
+        "session_id": sid, "path": p, "kind": "date_pattern", "value": "hhmmss"})
+    assert bad.status_code == 400
+
+
 def test_corrections_run_pagination_and_filter():
     db = get_db()
     sid = db.create_session("/tmp", "local")

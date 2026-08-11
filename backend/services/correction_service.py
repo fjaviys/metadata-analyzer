@@ -106,16 +106,44 @@ def override_correction(row: dict, ov: dict) -> bool:
     return True
 
 
+def file_override_result(row: dict, fo: dict) -> Optional[str]:
+    """
+    Aplica una decisión POR ARCHIVO. Devuelve 'set' (modificó row), 'skip'
+    (excluir explícitamente) o None (sin efecto → seguir con carpeta/análisis).
+    """
+    kind = fo.get("kind")
+    if kind == "skip":
+        return "skip"
+    if kind == "date_value" and fo.get("value"):
+        new = fo["value"]
+        prec = fo.get("precision") or "FULL_DATE"
+    elif kind == "date_pattern" and fo.get("value"):
+        det = pp.resolve(row["path"], fo["value"], "auto")
+        if not (det and det.is_valid):
+            return None
+        new, prec = det.to_exif_string(), det.precision.label
+    else:
+        return None
+    if row.get("has_exif_date") and row.get("exif_date") == new:
+        return "skip"   # idempotente: ya tiene esa fecha
+    row["recommended_date"] = new
+    row["recommended_precision"] = prec
+    row["recommended_source"] = "file-override"
+    row["needs_correction"] = 1
+    return "set"
+
+
 def build_candidates(session_id: int, subfolders: list[str], root: str) -> list[dict]:
     """
-    Construye los candidatos a corregir combinando:
-      - archivos ya marcados por el análisis (needs_correction) dentro del ámbito,
-      - archivos bajo una carpeta con override, AUNQUE el análisis no los marcara
-        (rescate) — se recalcula su fecha con el patrón.
-    El override más profundo gana. Respeta la selección de subcarpetas.
+    Construye los candidatos a corregir combinando, por prioridad:
+      1) decisión POR ARCHIVO (file_overrides): valor fijo, patrón o "no cambiar",
+      2) override por CARPETA (rescata archivos no marcados),
+      3) lo que el análisis marcó (needs_correction).
+    Respeta la selección de subcarpetas.
     """
     db = get_db()
     overrides = db.get_overrides(session_id)              # más profundos primero
+    file_ovs = {fo["path"]: fo for fo in db.get_file_overrides(session_id)}
     all_rows = db.get_files(session_id, limit=1_000_000)  # TODAS (para rescate)
     real_subs = validate_subfolders(root, subfolders) if subfolders else None
 
@@ -123,6 +151,15 @@ def build_candidates(session_id: int, subfolders: list[str], root: str) -> list[
     for row in all_rows:
         if real_subs is not None and not any(_under_folder(row["path"], s) for s in real_subs):
             continue
+        fo = file_ovs.get(row["path"])
+        if fo is not None:
+            res = file_override_result(row, fo)
+            if res == "set":
+                out.append(row)
+                continue
+            if res == "skip":
+                continue
+            # res None -> cae a carpeta/análisis
         ov = _override_for(row["path"], overrides)
         if ov is not None and override_correction(row, ov):
             out.append(row)

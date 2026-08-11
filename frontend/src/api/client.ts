@@ -116,6 +116,28 @@ export const api = {
   deleteOverride: (id: number) =>
     request<{ deleted: number }>(`/corrections/overrides/${id}`, { method: 'DELETE' }),
 
+  getDateOptions: (sessionId: number, path: string) =>
+    request<{ path: string; media_type: string; exif: string | null;
+              recommended: string | null; needs_correction: boolean;
+              options: Array<{ source: string; label: string; value: string;
+                               precision: string | null }> }>(
+      `/corrections/date-options?session_id=${sessionId}&path=${encodeURIComponent(path)}`),
+
+  setFileOverride: (body: { session_id: number; path: string; kind: string;
+                            value?: string; precision?: string }) =>
+    request<{ id: number; path: string; kind: string; new: string | null; precision: string | null }>(
+      '/corrections/file-overrides', { method: 'POST', body: JSON.stringify(body) }),
+
+  listFileOverrides: (sessionId: number) =>
+    request<{ file_overrides: Array<{ id: number; path: string; kind: string;
+                                      value: string | null; precision: string | null }> }>(
+      `/corrections/file-overrides?session_id=${sessionId}`),
+
+  deleteFileOverride: (sessionId: number, path: string) =>
+    request<{ deleted: string }>(
+      `/corrections/file-overrides?session_id=${sessionId}&path=${encodeURIComponent(path)}`,
+      { method: 'DELETE' }),
+
   getCorrectionRun: (runId: string, opts: { only_changes?: boolean;
                                             limit?: number; offset?: number } = {}) => {
     const q = new URLSearchParams();
