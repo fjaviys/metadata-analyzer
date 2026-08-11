@@ -1,6 +1,7 @@
 ---
 import MainLayout from '../layouts/MainLayout.astro';
 import SessionsList from '../components/SessionsList.vue';
+import StepNav from '../components/StepNav.astro';
 
 const steps = [
   { n: 1, title: 'Configura', text: 'Conecta tu sistema de archivos, Immich u OMV y prueba la conexión.', href: '/config' },
@@ -32,4 +33,5 @@ const steps = [
   </section>
 
   <SessionsList client:load />
+  <StepNav next={{ href: '/config', label: 'Configuración' }} />
 </MainLayout>

@@ -1,0 +1,24 @@
+---
+// Navegación entre pasos del flujo (Atrás / Siguiente).
+interface Link { href: string; label: string; }
+interface Props {
+  prev?: Link;
+  next?: Link;
+}
+const { prev, next } = Astro.props;
+---
+<nav class="mt-8 flex items-center justify-between border-t border-slate-200 pt-4">
+  {prev ? (
+    <a href={prev.href} class="btn-ghost">
+      <span aria-hidden="true">←</span>
+      <span>{prev.label}</span>
+    </a>
+  ) : <span></span>}
+
+  {next ? (
+    <a href={next.href} class="btn-primary">
+      <span>{next.label}</span>
+      <span aria-hidden="true">→</span>
+    </a>
+  ) : <span></span>}
+</nav>

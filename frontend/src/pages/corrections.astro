@@ -1,6 +1,7 @@
 ---
 import MainLayout from '../layouts/MainLayout.astro';
 import CorrectionsRunner from '../components/CorrectionsRunner.vue';
+import StepNav from '../components/StepNav.astro';
 ---
 <MainLayout title="Correcciones · Metadata Analyzer" active="corrections">
   <h1 class="mb-2 text-xl font-semibold text-slate-800">Corrección de metadatos</h1>
@@ -10,4 +11,8 @@ import CorrectionsRunner from '../components/CorrectionsRunner.vue';
     backup + verificación de cada archivo.
   </p>
   <CorrectionsRunner client:load />
+  <StepNav
+    prev={{ href: '/analysis', label: 'Análisis' }}
+    next={{ href: '/', label: 'Inicio' }}
+  />
 </MainLayout>

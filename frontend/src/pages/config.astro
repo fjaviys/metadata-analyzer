@@ -1,6 +1,7 @@
 ---
 import MainLayout from '../layouts/MainLayout.astro';
 import ConfigForm from '../components/ConfigForm.vue';
+import StepNav from '../components/StepNav.astro';
 ---
 <MainLayout title="Configuración · Metadata Analyzer" active="config">
   <h1 class="mb-2 text-xl font-semibold text-slate-800">Configuración de conexión</h1>
@@ -9,4 +10,8 @@ import ConfigForm from '../components/ConfigForm.vue';
     en este navegador para usarla al lanzar el análisis.
   </p>
   <ConfigForm client:load />
+  <StepNav
+    prev={{ href: '/', label: 'Inicio' }}
+    next={{ href: '/analysis', label: 'Análisis' }}
+  />
 </MainLayout>
