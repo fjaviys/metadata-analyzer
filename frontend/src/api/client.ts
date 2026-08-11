@@ -98,6 +98,22 @@ export const api = {
   startCorrection: (body: CorrectionRequest) =>
     request<CorrectionStarted>('/corrections', { method: 'POST', body: JSON.stringify(body) }),
 
+  getPatternPresets: () =>
+    request<{ presets: Array<{ key: string; label: string; pattern: string; source: string }> }>(
+      '/corrections/pattern-presets'),
+
+  createOverride: (body: { session_id: number; folder: string; pattern: string; source?: string }) =>
+    request<{ id: number; folder: string; pattern: string; source: string; affected: number;
+              preview: Array<{ path: string; old: string | null; new: string; precision: string }> }>(
+      '/corrections/overrides', { method: 'POST', body: JSON.stringify(body) }),
+
+  listOverrides: (sessionId: number) =>
+    request<{ overrides: Array<{ id: number; folder: string; pattern: string; source: string }> }>(
+      `/corrections/overrides?session_id=${sessionId}`),
+
+  deleteOverride: (id: number) =>
+    request<{ deleted: number }>(`/corrections/overrides/${id}`, { method: 'DELETE' }),
+
   getCorrectionRun: (runId: string, opts: { only_changes?: boolean;
                                             limit?: number; offset?: number } = {}) => {
     const q = new URLSearchParams();

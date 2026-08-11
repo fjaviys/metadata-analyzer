@@ -116,6 +116,13 @@ class CorrectionStarted(BaseModel):
     status: str = "running"
 
 
+class OverrideRequest(BaseModel):
+    session_id: int
+    folder: str = Field(..., description="Carpeta (dentro de la raíz) a la que aplicar el patrón")
+    pattern: str = Field(..., description="Patrón de tokens (AAAA-MM-DD…) o clave de preset")
+    source: str = Field("auto", description="Dónde leer la fecha: auto|filename|folder|path")
+
+
 class ApiError(BaseModel):
     error: str
     detail: Optional[str] = None

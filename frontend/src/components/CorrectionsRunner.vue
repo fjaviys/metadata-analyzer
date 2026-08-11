@@ -18,6 +18,12 @@
     <template v-else>
       <FolderTreeSelector :tree="tree" @update:selected="selected = $event" />
 
+      <PatternOverrideEditor :session-id="sessionId" :root="sessionRoot"
+                             @changed="overridesChanged = true" />
+
+      <AlertBox v-if="overridesChanged" variant="info"
+        message="Has cambiado un patrón manual. Vuelve a simular para ver el resultado actualizado." />
+
       <div class="card space-y-4">
         <div class="flex items-center gap-3">
           <label class="flex items-center gap-2 text-sm font-medium text-slate-700">
@@ -58,15 +64,15 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { api, ApiError } from '../api/client';
-import type { FolderNode, SessionSummary } from '../types/api';
+import type { FolderNode, ProgressEvent, SessionSummary } from '../types/api';
 import AlertBox from './AlertBox.vue';
 import AnalysisProgress from './AnalysisProgress.vue';
 import CorrectionResults from './CorrectionResults.vue';
 import FolderTreeSelector from './FolderTreeSelector.vue';
 import LoadingSpinner from './LoadingSpinner.vue';
-import type { ProgressEvent } from '../types/api';
+import PatternOverrideEditor from './PatternOverrideEditor.vue';
 
 const sessions = ref<SessionSummary[]>([]);
 const sessionId = ref(0);
@@ -77,7 +83,11 @@ const confirmReal = ref(false);
 const running = ref(false);
 const runId = ref('');
 const finishedRunId = ref('');
+const overridesChanged = ref(false);
 const error = ref('');
+
+const sessionRoot = computed(() =>
+  sessions.value.find((s) => s.id === sessionId.value)?.root || '');
 
 function onRunDone(ev: ProgressEvent) {
   if (ev.status === 'completed') finishedRunId.value = runId.value;
@@ -104,6 +114,7 @@ async function run() {
   error.value = '';
   runId.value = '';
   finishedRunId.value = '';
+  overridesChanged.value = false;
   try {
     const res = await api.startCorrection({
       session_id: sessionId.value,

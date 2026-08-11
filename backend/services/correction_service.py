@@ -17,6 +17,7 @@ import os
 import uuid
 
 import bootstrap  # noqa: F401
+import pattern_parser as pp
 from correction_engine import CorrectionEngine
 
 from core.config import settings
@@ -55,6 +56,28 @@ def _candidates(session_id: int, subfolders: list[str], root: str) -> list[dict]
     return list(seen.values())
 
 
+def apply_overrides(session_id: int, rows: list[dict]) -> list[dict]:
+    """
+    Aplica los overrides de patrón de la sesión a las filas indicadas: recalcula
+    la fecha propuesta de cada archivo bajo una carpeta con override (el override
+    más profundo gana). Modifica y devuelve las filas.
+    """
+    overrides = get_db().get_overrides(session_id)   # más profundos primero
+    if not overrides:
+        return rows
+    for row in rows:
+        for ov in overrides:
+            if _under_folder(row["path"], ov["folder"]):
+                det = pp.resolve(row["path"], ov["pattern"], ov.get("source", "auto"))
+                if det and det.is_valid:
+                    row["recommended_date"] = det.to_exif_string()
+                    row["recommended_precision"] = det.precision.label
+                    row["recommended_source"] = "override"
+                    row["needs_correction"] = True
+                break
+    return rows
+
+
 async def start_correction(session_id: int, subfolders: list[str],
                            dry_run: bool, confirm_real_write: bool) -> dict:
     """
@@ -75,6 +98,7 @@ async def start_correction(session_id: int, subfolders: list[str],
 
     root = session["root"]
     candidates = _candidates(session_id, subfolders, root)
+    candidates = apply_overrides(session_id, candidates)
     run_id = uuid.uuid4().hex[:12]
 
     log.info(f"corrección {'DRY-RUN' if dry_run else 'REAL'} run={run_id} "

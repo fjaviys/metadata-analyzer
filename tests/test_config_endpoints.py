@@ -34,7 +34,50 @@ pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
 import app as backend_app  # noqa: E402
 from services.correction_service import _under_folder, _candidates  # noqa: E402
+import services.correction_service as correction_service  # noqa: E402
 from database.db import get_db  # noqa: E402
+
+
+def test_pattern_presets_endpoint():
+    r = client.get("/api/corrections/pattern-presets")
+    assert r.status_code == 200
+    keys = {p["key"] for p in r.json()["presets"]}
+    assert {"iso", "dmy", "daymonth_folderyear"} <= keys
+
+
+def test_override_recomputes_and_applies(tmp_path):
+    db = get_db()
+    root = str(tmp_path)
+    os.makedirs(os.path.join(root, "2009", "02102009"))
+    sid = db.create_session(root, "local")
+    fpath = os.path.join(root, "2009", "02102009", "IMG_0006.JPG")
+    open(fpath, "wb").close()
+    # análisis previo propuso solo el año (simulado)
+    db.insert_file(sid, {
+        "path": fpath, "media_type": "photo", "needs_correction": True,
+        "recommended_date": "2009:01:01 00:00:00", "recommended_precision": "YEAR",
+        "recommended_source": "path", "inconsistencies": [],
+    }, "2009", "2009/02102009")
+
+    # crear override con patrón DDMMAAAA sobre la carpeta 2009
+    r = client.post("/api/corrections/overrides", json={
+        "session_id": sid, "folder": os.path.join(root, "2009"),
+        "pattern": "DDMMAAAA", "source": "auto"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["affected"] == 1
+    assert body["preview"][0]["new"] == "2009:10:02 00:00:00"
+
+    # al aplicar overrides a los candidatos, la fecha recomendada cambia
+    cands = correction_service.apply_overrides(
+        sid, db.get_files(sid, needs_correction=True, limit=100))
+    assert cands[0]["recommended_date"] == "2009:10:02 00:00:00"
+    assert cands[0]["recommended_source"] == "override"
+
+    # listar y borrar
+    assert len(client.get("/api/corrections/overrides", params={"session_id": sid}).json()["overrides"]) == 1
+    client.delete(f"/api/corrections/overrides/{body['id']}")
+    assert client.get("/api/corrections/overrides", params={"session_id": sid}).json()["overrides"] == []
 
 
 def test_corrections_run_pagination_and_filter():

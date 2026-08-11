@@ -109,6 +109,17 @@ CREATE TABLE IF NOT EXISTS corrections (
     FOREIGN KEY (session_id) REFERENCES analysis_sessions(id) ON DELETE SET NULL
 );
 
+CREATE TABLE IF NOT EXISTS path_overrides (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER NOT NULL,
+    folder     TEXT NOT NULL,
+    pattern    TEXT NOT NULL,
+    source     TEXT DEFAULT 'auto',
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (session_id) REFERENCES analysis_sessions(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_overrides_session   ON path_overrides(session_id);
 CREATE INDEX IF NOT EXISTS idx_files_session      ON analyzed_files(session_id);
 CREATE INDEX IF NOT EXISTS idx_files_needs        ON analyzed_files(session_id, needs_correction);
 CREATE INDEX IF NOT EXISTS idx_files_l1           ON analyzed_files(session_id, folder_l1);
@@ -411,6 +422,29 @@ class DatabaseManager:
         if only_changes:
             q += " AND correction_type != 'skip' AND status != 'skipped'"
         return int(self.conn.execute(q, args).fetchone()["n"])
+
+    # ------------------------------------------------------------------ overrides
+    def add_override(self, session_id: int, folder: str, pattern: str,
+                     source: str = "auto") -> int:
+        with self._tx() as c:
+            # un override por carpeta: sustituye el previo de la misma carpeta
+            c.execute("DELETE FROM path_overrides WHERE session_id=? AND folder=?",
+                      (session_id, folder))
+            cur = c.execute(
+                "INSERT INTO path_overrides(session_id, folder, pattern, source, created_at) "
+                "VALUES(?,?,?,?,?)",
+                (session_id, folder, pattern, source, _now()))
+            return int(cur.lastrowid)
+
+    def get_overrides(self, session_id: int) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT * FROM path_overrides WHERE session_id=? ORDER BY LENGTH(folder) DESC, id",
+            (session_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def delete_override(self, override_id: int) -> None:
+        with self._tx() as c:
+            c.execute("DELETE FROM path_overrides WHERE id=?", (override_id,))
 
     def correction_stats(self, run_id: str) -> dict:
         rows = self.conn.execute(
