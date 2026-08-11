@@ -11,7 +11,7 @@ from core.security import validate_subfolders
 from database.db import get_db
 from schemas.models import CorrectionRequest, CorrectionStarted, OverrideRequest
 from services import correction_service
-from services.correction_service import _under_folder
+from services.correction_service import _under_folder, override_correction
 
 router = APIRouter(prefix="/corrections", tags=["corrections"])
 
@@ -60,23 +60,30 @@ async def create_override(req: OverrideRequest):
 
     override_id = db.add_override(req.session_id, real_folder, pattern, source)
 
-    # previsualización: recalcular fecha para los archivos bajo la carpeta
-    files = db.get_files(req.session_id, needs_correction=True, limit=1_000_000)
-    affected, preview = 0, []
+    # previsualización: TODOS los archivos bajo la carpeta (incluye "rescatados"),
+    # aplicando la misma lógica que en la corrección (idempotencia incluida).
+    ov = {"folder": real_folder, "pattern": pattern, "source": source}
+    files = db.get_files(req.session_id, limit=1_000_000)
+    affected, rescued, preview = 0, 0, []
     for f in files:
-        if _under_folder(f["path"], real_folder):
-            det = pp.resolve(f["path"], pattern, source)
-            if det and det.is_valid:
-                affected += 1
-                if len(preview) < 20:
-                    preview.append({
-                        "path": f["path"],
-                        "old": f.get("recommended_date"),
-                        "new": det.to_exif_string(),
-                        "precision": det.precision.label,
-                    })
+        if not _under_folder(f["path"], real_folder):
+            continue
+        was_marked = bool(f.get("needs_correction"))
+        old = f.get("exif_date") or f.get("recommended_date")
+        if override_correction(f, ov):
+            affected += 1
+            if not was_marked:
+                rescued += 1
+            if len(preview) < 20:
+                preview.append({
+                    "path": f["path"], "old": old,
+                    "new": f["recommended_date"],
+                    "precision": f["recommended_precision"],
+                    "rescued": not was_marked,
+                })
     return {"id": override_id, "folder": real_folder, "pattern": pattern,
-            "source": source, "affected": affected, "preview": preview}
+            "source": source, "affected": affected, "rescued": rescued,
+            "preview": preview}
 
 
 @router.get("/overrides")

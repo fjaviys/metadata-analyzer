@@ -104,7 +104,9 @@ export const api = {
 
   createOverride: (body: { session_id: number; folder: string; pattern: string; source?: string }) =>
     request<{ id: number; folder: string; pattern: string; source: string; affected: number;
-              preview: Array<{ path: string; old: string | null; new: string; precision: string }> }>(
+              rescued: number;
+              preview: Array<{ path: string; old: string | null; new: string;
+                               precision: string; rescued: boolean }> }>(
       '/corrections/overrides', { method: 'POST', body: JSON.stringify(body) }),
 
   listOverrides: (sessionId: number) =>

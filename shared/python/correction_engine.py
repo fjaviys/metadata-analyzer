@@ -33,12 +33,27 @@ import metadata_analyzer as ma
 EXIFTOOL_BIN = os.getenv("EXIFTOOL_BIN", "exiftool")
 DEFAULT_ERROR_ABORT_RATIO = float(os.getenv("CORRECTION_ERROR_ABORT_RATIO", "0.10"))
 
-# tags de fecha que se escriben / limpian
-PHOTO_DATE_TAGS = ["DateTimeOriginal", "CreateDate", "ModifyDate"]
+# Tags de fecha que se escriben / limpian.
+# Se cubren EXIF + XMP + IPTC (fotos) y QuickTime/Keys + XMP (vídeos) para que los
+# gestores (Immich, PhotoPrism, Google Photos, digiKam…) lean la fecha correcta,
+# no solo un subconjunto.
+PHOTO_DATE_TAGS = [
+    # EXIF (lo que usan casi todos como prioridad)
+    "EXIF:DateTimeOriginal", "EXIF:CreateDate", "EXIF:ModifyDate",
+    # XMP (Immich/PhotoPrism/digiKam lo consultan)
+    "XMP:DateTimeOriginal", "XMP:CreateDate", "XMP:ModifyDate", "XMP:DateCreated",
+    # IPTC (fecha/hora de creación)
+    "IPTC:DateCreated", "IPTC:TimeCreated",
+]
 VIDEO_DATE_TAGS = [
+    # QuickTime (contenedor MP4/MOV)
     "QuickTime:CreateDate", "QuickTime:ModifyDate",
-    "TrackCreateDate", "TrackModifyDate",
-    "MediaCreateDate", "MediaModifyDate",
+    "QuickTime:TrackCreateDate", "QuickTime:TrackModifyDate",
+    "QuickTime:MediaCreateDate", "QuickTime:MediaModifyDate",
+    # CreationDate con zona (lo que Immich prioriza en vídeo, incl. iPhone)
+    "QuickTime:CreationDate", "Keys:CreationDate",
+    # XMP por si el gestor lo prefiere
+    "XMP:CreateDate", "XMP:DateTimeOriginal",
 ]
 
 BackupFn = Callable[[str], str]          # path -> backup_path
@@ -82,10 +97,8 @@ class CorrectionPlan:
 
     @property
     def tags(self) -> list[str]:
-        base = PHOTO_DATE_TAGS.copy()
-        if self.media_type == "video":
-            base = base + VIDEO_DATE_TAGS
-        return base
+        # tags específicos por tipo (no mezclar EXIF de foto en un vídeo)
+        return list(VIDEO_DATE_TAGS if self.media_type == "video" else PHOTO_DATE_TAGS)
 
 
 def plan_from_file(row: dict) -> CorrectionPlan:
@@ -133,33 +146,43 @@ def _exiftool_write(path: str, plan: CorrectionPlan) -> tuple[bool, str]:
         args = [f"-{t}=" for t in plan.tags]
     else:
         return True, "skip"
-    cmd = [EXIFTOOL_BIN, "-overwrite_original", "-P", *args, path]
+    # -m ignora avisos menores (p. ej. tags no aplicables a ese formato) para que
+    # escribir un conjunto amplio de tags no aborte por un tag irrelevante.
+    cmd = [EXIFTOOL_BIN, "-overwrite_original", "-P", "-m", *args, path]
     proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if proc.returncode != 0:
         return False, (proc.stderr or proc.stdout).strip()[:300]
     return True, proc.stdout.strip()
 
 
+# Tags que se re-leen para verificar, por tipo de medio.
+_VERIFY_READ = {
+    "photo": ("DateTimeOriginal", "CreateDate"),
+    "video": ("CreationDate", "CreateDate", "MediaCreateDate"),
+}
+
+
 def _verify(path: str, plan: CorrectionPlan) -> tuple[bool, str]:
-    """Re-lee el archivo y comprueba que el cambio se aplicó."""
+    """Re-lee el archivo y comprueba que el cambio se aplicó (tags según el tipo)."""
     try:
         batch = ma.run_exiftool([path])
     except RuntimeError as e:
         return False, f"verificación: no se pudo releer ({e})"
     tags = batch[0] if batch else {}
+    read_tags = _VERIFY_READ.get(plan.media_type, _VERIFY_READ["photo"])
 
     if plan.action == "set_date":
-        got = tags.get("DateTimeOriginal") or tags.get("CreateDate")
-        got_dt = ma.parse_exif_datetime(got)
         want_dt = ma.parse_exif_datetime(plan.target)
-        if got_dt is not None and want_dt is not None and got_dt == want_dt:
-            return True, f"verificado: {got}"
+        for tag in read_tags:
+            got_dt = ma.parse_exif_datetime(tags.get(tag))
+            if got_dt is not None and want_dt is not None and got_dt == want_dt:
+                return True, f"verificado: {tag}={tags.get(tag)}"
+        got = next((tags.get(t) for t in read_tags if tags.get(t)), None)
         return False, f"verificación fallida: esperado {plan.target}, leído {got}"
 
     if plan.action == "cleanup":
-        remaining = tags.get("DateTimeOriginal") or tags.get("CreateDate")
+        remaining = next((tags.get(t) for t in read_tags if tags.get(t)), None)
         rem_dt = ma.parse_exif_datetime(remaining)
-        # limpieza correcta si ya no hay fecha o dejó de estar fuera de rango
         if rem_dt is None or ma._date_in_range(rem_dt):
             return True, "verificado: fecha corrupta eliminada"
         return False, f"verificación fallida: aún hay fecha corrupta {remaining}"

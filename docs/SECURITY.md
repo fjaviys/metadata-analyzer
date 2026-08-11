@@ -64,6 +64,28 @@ deliberada solo cuando vayas a corregir.
 | Escritura que no verifica | Se **revierte** ese archivo inmediatamente desde backup. |
 | Demasiados errores | Se **aborta** y se **restaura** todo el run. |
 
+## Metadatos que se escriben (compatibilidad con gestores)
+
+Para que la fecha corregida la lean correctamente Immich, PhotoPrism, Google Photos,
+digiKam, etc. (no solo un tag), la corrección escribe un conjunto amplio:
+
+- **Fotos**: EXIF `DateTimeOriginal`/`CreateDate`/`ModifyDate`, XMP
+  `DateTimeOriginal`/`CreateDate`/`ModifyDate`/`DateCreated`, e IPTC
+  `DateCreated`/`TimeCreated`.
+- **Vídeos**: QuickTime `CreateDate`/`ModifyDate`/`TrackCreateDate`/`MediaCreateDate`,
+  `CreationDate` y `Keys:CreationDate` (lo que prioriza Immich en vídeo), más XMP.
+
+Se usa `exiftool -m` para ignorar avisos de tags no aplicables a un formato concreto
+sin abortar. La verificación re-lee los tags relevantes al tipo de medio.
+
+## Rescate de archivos no marcados por el análisis
+
+Un patrón manual (override) aplicado a una carpeta corrige **todos** sus archivos a
+cualquier nivel, incluidos los que el análisis **no** marcó (p. ej. con EXIF dentro
+de rango pero incorrecto). Es idempotente: si el EXIF ya coincide exactamente con la
+fecha del patrón, ese archivo se omite (no se reescribe). Sigue habiendo backup +
+verificación por archivo y modo dry-run.
+
 ## Acciones prohibidas
 
 - No se borran archivos originales (los duplicados solo se **reportan**; el borrado

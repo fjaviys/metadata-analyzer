@@ -80,6 +80,54 @@ def test_override_recomputes_and_applies(tmp_path):
     assert client.get("/api/corrections/overrides", params={"session_id": sid}).json()["overrides"] == []
 
 
+def test_override_rescues_unmarked_files(tmp_path):
+    db = get_db()
+    root = str(tmp_path)
+    os.makedirs(os.path.join(root, "2009", "02102009"))
+    sid = db.create_session(root, "local")
+    # archivo que el análisis NO marcó (needs_correction=False), con EXIF "correcto"
+    unmarked = os.path.join(root, "2009", "02102009", "IMG_9.JPG")
+    open(unmarked, "wb").close()
+    db.insert_file(sid, {
+        "path": unmarked, "media_type": "photo", "needs_correction": False,
+        "exif_date": "2015:05:05 12:00:00", "exif_date_tag": "DateTimeOriginal",
+        "has_exif_date": True, "recommended_date": None, "inconsistencies": [],
+    }, "2009", "2009/02102009")
+
+    # sin override, no es candidato
+    assert correction_service.build_candidates(sid, [], root) == []
+
+    # con override DDMMAAAA sobre 2009 -> rescata el archivo no marcado
+    r = client.post("/api/corrections/overrides", json={
+        "session_id": sid, "folder": os.path.join(root, "2009"),
+        "pattern": "DDMMAAAA", "source": "auto"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["affected"] == 1 and body["rescued"] == 1
+
+    cands = correction_service.build_candidates(sid, [], root)
+    assert len(cands) == 1
+    assert cands[0]["recommended_date"] == "2009:10:02 00:00:00"
+    assert cands[0]["recommended_source"] == "override"
+
+
+def test_override_idempotent_when_exif_matches(tmp_path):
+    db = get_db()
+    root = str(tmp_path)
+    os.makedirs(os.path.join(root, "2009", "02102009"))
+    sid = db.create_session(root, "local")
+    good = os.path.join(root, "2009", "02102009", "IMG_ok.JPG")
+    open(good, "wb").close()
+    db.insert_file(sid, {
+        "path": good, "media_type": "photo", "needs_correction": False,
+        "exif_date": "2009:10:02 00:00:00", "exif_date_tag": "DateTimeOriginal",
+        "has_exif_date": True, "recommended_date": None, "inconsistencies": [],
+    }, "2009", "2009/02102009")
+    db.add_override(sid, os.path.join(root, "2009"), "DDMMAAAA", "auto")
+    # EXIF ya coincide con el patrón -> no se corrige (idempotente)
+    assert correction_service.build_candidates(sid, [], root) == []
+
+
 def test_corrections_run_pagination_and_filter():
     db = get_db()
     sid = db.create_session("/tmp", "local")

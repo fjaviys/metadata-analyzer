@@ -32,7 +32,8 @@
         <span v-else>Aplicar patrón</span>
       </button>
       <span v-if="lastAffected !== null" class="text-sm text-slate-600">
-        {{ lastAffected }} archivo(s) afectado(s)
+        {{ lastAffected }} archivo(s) afectado(s)<template v-if="lastRescued"> ·
+          <span class="text-amber-600">{{ lastRescued }} rescatado(s)</span> (no marcados por el análisis)</template>
       </span>
     </div>
 
@@ -47,7 +48,10 @@
         </thead>
         <tbody>
           <tr v-for="p in preview" :key="p.path" class="border-t border-slate-100">
-            <td class="max-w-xs truncate pr-3 py-1" :title="p.path">{{ short(p.path) }}</td>
+            <td class="max-w-xs truncate pr-3 py-1" :title="p.path">
+              {{ short(p.path) }}
+              <span v-if="p.rescued" class="ml-1 rounded bg-amber-100 px-1 text-[10px] text-amber-700">rescatado</span>
+            </td>
             <td class="pr-3 font-mono text-slate-400">{{ p.old || '—' }}</td>
             <td class="px-1 text-slate-300">→</td>
             <td class="font-mono text-slate-800">{{ p.new }}</td>
@@ -88,7 +92,8 @@ const customPattern = ref('');
 const loading = ref(false);
 const error = ref('');
 const lastAffected = ref<number | null>(null);
-const preview = ref<Array<{ path: string; old: string | null; new: string }>>([]);
+const lastRescued = ref(0);
+const preview = ref<Array<{ path: string; old: string | null; new: string; rescued?: boolean }>>([]);
 
 const rootHint = computed(() => props.root || '/media');
 const effectivePattern = computed(() =>
@@ -107,6 +112,7 @@ async function apply() {
       pattern: effectivePattern.value, source: 'auto',
     });
     lastAffected.value = res.affected;
+    lastRescued.value = res.rescued;
     preview.value = res.preview;
     await loadOverrides();
     emit('changed');

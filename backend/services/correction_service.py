@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import os
 import uuid
+from typing import Optional
 
 import bootstrap  # noqa: F401
 import pattern_parser as pp
@@ -78,6 +79,58 @@ def apply_overrides(session_id: int, rows: list[dict]) -> list[dict]:
     return rows
 
 
+def _override_for(path: str, overrides: list[dict]) -> Optional[dict]:
+    """Override más profundo (la lista viene ordenada por profundidad desc)."""
+    for ov in overrides:
+        if _under_folder(path, ov["folder"]):
+            return ov
+    return None
+
+
+def override_correction(row: dict, ov: dict) -> bool:
+    """
+    Aplica el patrón del override a `row`. Devuelve True si genera una corrección
+    (recalcula recommended_*), incluso "rescatando" archivos que el análisis NO
+    marcó. Idempotente: si el EXIF ya coincide exactamente, no corrige.
+    """
+    det = pp.resolve(row["path"], ov["pattern"], ov.get("source", "auto"))
+    if not (det and det.is_valid):
+        return False
+    new = det.to_exif_string()
+    if row.get("has_exif_date") and row.get("exif_date") == new:
+        return False
+    row["recommended_date"] = new
+    row["recommended_precision"] = det.precision.label
+    row["recommended_source"] = "override"
+    row["needs_correction"] = 1
+    return True
+
+
+def build_candidates(session_id: int, subfolders: list[str], root: str) -> list[dict]:
+    """
+    Construye los candidatos a corregir combinando:
+      - archivos ya marcados por el análisis (needs_correction) dentro del ámbito,
+      - archivos bajo una carpeta con override, AUNQUE el análisis no los marcara
+        (rescate) — se recalcula su fecha con el patrón.
+    El override más profundo gana. Respeta la selección de subcarpetas.
+    """
+    db = get_db()
+    overrides = db.get_overrides(session_id)              # más profundos primero
+    all_rows = db.get_files(session_id, limit=1_000_000)  # TODAS (para rescate)
+    real_subs = validate_subfolders(root, subfolders) if subfolders else None
+
+    out: list[dict] = []
+    for row in all_rows:
+        if real_subs is not None and not any(_under_folder(row["path"], s) for s in real_subs):
+            continue
+        ov = _override_for(row["path"], overrides)
+        if ov is not None and override_correction(row, ov):
+            out.append(row)
+        elif row.get("needs_correction"):
+            out.append(row)
+    return out
+
+
 async def start_correction(session_id: int, subfolders: list[str],
                            dry_run: bool, confirm_real_write: bool) -> dict:
     """
@@ -97,8 +150,7 @@ async def start_correction(session_id: int, subfolders: list[str],
         )
 
     root = session["root"]
-    candidates = _candidates(session_id, subfolders, root)
-    candidates = apply_overrides(session_id, candidates)
+    candidates = build_candidates(session_id, subfolders, root)
     run_id = uuid.uuid4().hex[:12]
 
     log.info(f"corrección {'DRY-RUN' if dry_run else 'REAL'} run={run_id} "
