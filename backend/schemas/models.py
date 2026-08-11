@@ -131,6 +131,34 @@ class FileOverrideRequest(BaseModel):
     precision: Optional[str] = None
 
 
+# --------------------------- reorganización (Fase 2) ------------------------
+
+class ReorganizeRequest(BaseModel):
+    session_id: int
+    subfolders: list[str] = Field(default_factory=list,
+                                  description="Subcarpetas seleccionadas (vacío = todas)")
+    dry_run: bool = True
+    confirm_real_write: bool = Field(
+        False, description="Debe ser True para mover archivos REALMENTE")
+    base_mode: Literal["auto", "root", "manual"] = Field(
+        "auto", description="auto: pela subcarpetas de fecha por archivo; "
+                            "root: raíz de la sesión; manual: base_folder")
+    base_folder: Optional[str] = Field(
+        None, description="Carpeta base (solo si base_mode='manual')")
+    layout: str = Field("AAAA/MM",
+                        description="Patrón de subcarpetas destino (tokens AAAA/MM/DD…) o preset")
+    date_source: Literal["session", "exif_live"] = Field(
+        "session", description="session: fecha recomendada/EXIF de la sesión; "
+                               "exif_live: re-lee el EXIF actual del archivo")
+
+
+class ReorganizeStarted(BaseModel):
+    run_id: str
+    dry_run: bool
+    total_candidates: int
+    status: str = "running"
+
+
 class ApiError(BaseModel):
     error: str
     detail: Optional[str] = None

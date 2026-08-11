@@ -125,7 +125,7 @@ export interface CorrectionRow {
 }
 
 export interface ProgressEvent {
-  phase?: 'analysis' | 'correction';
+  phase?: 'analysis' | 'correction' | 'reorganize';
   type?: string;
   status?: string;
   current_file?: string;
@@ -140,10 +140,61 @@ export interface ProgressEvent {
   reverted?: number;
   applied?: number;
   planned?: number;
+  moved?: number;
   aborted?: boolean;
   abort_reason?: string | null;
   dry_run?: boolean;
   error?: string;
   report_path?: string | null;
   duplicates?: number;
+}
+
+// --------------------------- reorganización (Fase 2) -------------------------
+
+export type BaseMode = 'auto' | 'root' | 'manual';
+export type DateSource = 'session' | 'exif_live';
+
+export interface ReorganizeRequest {
+  session_id: number;
+  subfolders?: string[];
+  dry_run: boolean;
+  confirm_real_write?: boolean;
+  base_mode: BaseMode;
+  base_folder?: string | null;
+  layout: string;
+  date_source: DateSource;
+}
+
+export interface ReorganizeStarted {
+  run_id: string;
+  dry_run: boolean;
+  total_candidates: number;
+  status: string;
+}
+
+export interface LayoutPreset {
+  key: string;
+  label: string;
+  layout: string;
+}
+
+export interface ReorganizeMove {
+  id: number;
+  original_path: string;
+  new_path?: string | null;
+  dry_run: number;
+  status: string;          // dry-run | moved | failed | skipped | reverted
+  reason?: string | null;
+  error?: string | null;
+  created_at?: string;
+}
+
+export interface ReorganizeRunSummary {
+  run_id: string;
+  started_at: string;
+  dry_run: number;
+  moved: number;
+  reverted: number;
+  failed: number;
+  total: number;
 }

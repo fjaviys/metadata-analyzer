@@ -17,7 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.requests import Request
 
-from api import analysis, config as config_api, corrections, progress, results
+from api import analysis, config as config_api, corrections, progress, reorganize, results
 from core.config import settings
 from core.exceptions import MetadataAnalyzerError
 from core.logger import get_logger
@@ -75,6 +75,7 @@ app.include_router(config_api.router, prefix="/api")
 app.include_router(analysis.router, prefix="/api")
 app.include_router(results.router, prefix="/api")
 app.include_router(corrections.router, prefix="/api")
+app.include_router(reorganize.router, prefix="/api")
 
 # --- WebSocket de progreso (sin prefijo /api) ---
 app.include_router(progress.router)

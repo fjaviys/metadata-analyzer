@@ -33,6 +33,13 @@
       <div v-if="phase === 'correction'">
         <span class="text-slate-400">Fallidos:</span> {{ ev?.failed ?? 0 }}
       </div>
+      <div v-if="phase === 'reorganize'">
+        <span class="text-slate-400">{{ ev?.dry_run ? 'Propuestos' : 'Movidos' }}:</span>
+        {{ ev?.moved ?? 0 }}
+      </div>
+      <div v-if="phase === 'reorganize'">
+        <span class="text-slate-400">Fallidos:</span> {{ ev?.failed ?? 0 }}
+      </div>
     </div>
 
     <p v-if="ev?.current_file" class="truncate text-xs text-slate-400" :title="ev.current_file">
@@ -60,7 +67,11 @@ const ev = ref<ProgressEvent | null>(null);
 let sock: ProgressSocket | null = null;
 
 const phase = computed(() => ev.value?.phase ?? (props.kind === 'run' ? 'correction' : 'analysis'));
-const phaseLabel = computed(() => phase.value === 'correction' ? 'Corrigiendo metadatos' : 'Analizando');
+const phaseLabel = computed(() => {
+  if (phase.value === 'correction') return 'Corrigiendo metadatos';
+  if (phase.value === 'reorganize') return 'Reorganizando carpetas';
+  return 'Analizando';
+});
 const done = computed(() => ev.value?.status === 'completed');
 const aborted = computed(() => !!ev.value?.aborted);
 const doneMessage = computed(() => {
@@ -68,6 +79,11 @@ const doneMessage = computed(() => {
     return ev.value?.dry_run
       ? `Simulación completada: ${ev.value?.applied ?? 0} cambios propuestos, ${ev.value?.skipped ?? 0} sin cambios.`
       : `Corrección completada: ${ev.value?.verified ?? 0} verificados, ${ev.value?.failed ?? 0} fallidos.`;
+  }
+  if (phase.value === 'reorganize') {
+    return ev.value?.dry_run
+      ? `Simulación completada: ${ev.value?.moved ?? 0} movimientos propuestos, ${ev.value?.skipped ?? 0} sin cambios.`
+      : `Reorganización completada: ${ev.value?.moved ?? 0} movidos, ${ev.value?.failed ?? 0} fallidos.`;
   }
   return `Análisis completado: ${ev.value?.needs_correction ?? 0} archivos a corregir.`;
 });

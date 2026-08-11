@@ -3,7 +3,8 @@
 import type {
   AnalysisRequest, AnalysisStarted, AnalyzedFile, BrowseResult, ConnectionTestRequest,
   ConnectionTestResult, CorrectionRequest, CorrectionRow, CorrectionStarted, FolderNode,
-  FormatCatalog, ProgressEvent, SessionSummary,
+  FormatCatalog, LayoutPreset, ProgressEvent, ReorganizeMove, ReorganizeRequest,
+  ReorganizeRunSummary, ReorganizeStarted, SessionSummary,
 } from '../types/api';
 
 // Config de runtime inyectada por el servidor (window.__MA_CONFIG__ en MainLayout).
@@ -149,6 +150,32 @@ export const api = {
       offset: number; corrections: CorrectionRow[];
     }>(`/corrections/${runId}?${q.toString()}`);
   },
+
+  // --- reorganización (Fase 2) ---
+  startReorganize: (body: ReorganizeRequest) =>
+    request<ReorganizeStarted>('/reorganize', { method: 'POST', body: JSON.stringify(body) }),
+
+  getLayoutPresets: () =>
+    request<{ presets: LayoutPreset[] }>('/reorganize/layout-presets'),
+
+  listReorganizeRuns: (sessionId: number) =>
+    request<{ runs: ReorganizeRunSummary[] }>(`/reorganize/runs?session_id=${sessionId}`),
+
+  getReorganizeRun: (runId: string, opts: { only_changes?: boolean;
+                                            limit?: number; offset?: number } = {}) => {
+    const q = new URLSearchParams();
+    if (opts.only_changes) q.set('only_changes', 'true');
+    if (opts.limit) q.set('limit', String(opts.limit));
+    if (opts.offset) q.set('offset', String(opts.offset));
+    return request<{
+      run_id: string; stats: Record<string, number>; total: number; count: number;
+      offset: number; moves: ReorganizeMove[];
+    }>(`/reorganize/${runId}?${q.toString()}`);
+  },
+
+  undoReorganize: (runId: string) =>
+    request<{ undone: number; failed: Array<{ path: string; error: string }> }>(
+      `/reorganize/${runId}/undo`, { method: 'POST' }),
 };
 
 // --- WebSocket de progreso ---

@@ -46,6 +46,7 @@ import app as backend_app  # noqa: E402
 from database.db import get_db  # noqa: E402
 import services.analysis_service as an  # noqa: E402
 import services.correction_service as co  # noqa: E402
+import services.reorganize_service as ro  # noqa: E402
 
 client = TestClient(backend_app.app)
 
@@ -76,6 +77,22 @@ def test_correction_requires_confirmation():
         "session_id": sid, "dry_run": False, "confirm_real_write": False})
     assert r.status_code == 428  # Precondition Required
     assert "confirm" in r.json()["detail"].lower() or "dry-run" in r.json()["detail"].lower()
+
+
+def test_reorganize_requires_confirmation():
+    db = get_db()
+    sid = db.create_session(tempfile.gettempdir(), "local")
+    db.finish_session(sid, {"total_files": 0})
+    r = client.post("/api/reorganize", json={
+        "session_id": sid, "dry_run": False, "confirm_real_write": False})
+    assert r.status_code == 428
+    assert "confirm" in r.json()["detail"].lower() or "dry-run" in r.json()["detail"].lower()
+
+
+def test_reorganize_layout_presets():
+    r = client.get("/api/reorganize/layout-presets")
+    assert r.status_code == 200
+    assert any(p["layout"] == "AAAA/MM" for p in r.json()["presets"])
 
 
 def _jpeg(path, exif_date=None):
@@ -118,6 +135,52 @@ def test_e2e_analysis_then_dryrun():
 
         corrs = db.get_corrections(run_id="dryrun01")
         assert corrs and all(c["dry_run"] == 1 for c in corrs)
+    finally:
+        loop.call_soon_threadsafe(loop.stop)
+        time.sleep(0.1)
+
+
+@pytest.mark.skipif(not _REAL, reason="requiere Pillow y exiftool")
+def test_e2e_reorganize_dryrun_then_real_then_undo():
+    loop = asyncio.new_event_loop()
+    t = threading.Thread(target=loop.run_forever, daemon=True)
+    t.start()
+    try:
+        media = tempfile.mkdtemp(prefix="ma_media_reorg_", dir=tempfile.gettempdir())
+        os.makedirs(os.path.join(media, "varios"))
+        f = os.path.join(media, "varios", "IMG_20200702.jpg")
+        _jpeg(f, exif_date="2020:07:02 10:00:00")
+
+        db = get_db()
+        sid = db.create_session(media, "local")
+        an._run_analysis_blocking(sid, media, None, True, None, loop)
+        s = db.get_session(sid)
+        assert s["status"] == "completed"
+
+        rows = db.get_files(sid, limit=1000)
+        from reorganize_engine import plan_reorganize
+        plans = plan_reorganize(rows, "auto", None, "AAAA/MM", "session")
+        expected_target = os.path.join(media, "varios", "2020", "07",
+                                       "IMG_20200702.jpg")
+        assert plans[0].action == "move"
+        assert plans[0].target == expected_target
+
+        # dry-run: no mueve nada
+        ro._run_reorganize_blocking("reorgdry01", sid, plans, True, loop)
+        assert os.path.isfile(f)
+
+        # real: mueve de verdad
+        ro._run_reorganize_blocking("reorgreal01", sid, plans, False, loop)
+        assert not os.path.isfile(f)
+        assert os.path.isfile(expected_target)
+        moves = db.get_reorganize_moves(run_id="reorgreal01")
+        assert moves and moves[0]["status"] == "moved"
+
+        # undo: vuelve a la ruta original
+        result = ro.undo("reorgreal01")
+        assert result["undone"] == 1
+        assert os.path.isfile(f)
+        assert not os.path.isfile(expected_target)
     finally:
         loop.call_soon_threadsafe(loop.stop)
         time.sleep(0.1)

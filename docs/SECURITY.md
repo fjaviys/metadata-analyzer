@@ -102,6 +102,41 @@ verificación por archivo y modo dry-run.
 - No se ejecutan escrituras destructivas sin verificación previa.
 - No se exponen secretos en logs.
 
+## Reorganización de carpetas (Fase 2)
+
+Mueve archivos a una estructura de carpetas por fecha **sin tocar sus metadatos**
+(eso ya lo hace la corrección). Comparte los mismos principios de seguridad:
+
+- **Nunca fabrica una fecha.** Un archivo sin fecha fiable (ni la de la sesión ni
+  el EXIF releído en vivo) se **omite** y se reporta; nunca se mueve a ciegas.
+- **Análisis obligatorio y confirmación explícita.** Igual que la corrección: el
+  dry-run está siempre disponible; REAL requiere `confirm_real_write=true` (428 si
+  falta).
+- **Mover con registro (no backup por copia).** Cada movimiento real queda
+  anotado en la tabla `reorganize_moves` (origen → destino), lo que permite
+  **deshacer un run completo** con un solo botón/endpoint
+  (`POST /reorganize/{run_id}/undo`), moviendo cada archivo de vuelta a su ruta
+  original.
+- **Colisión de destino → renombrado automático** con sufijo (`_1`, `_2`…).
+  Nunca se sobrescribe ni se pierde un archivo por una colisión de nombres.
+- **Cross-device (EXDEV).** Si el origen y el destino están en filesystems
+  distintos, `os.rename` falla; se hace *fallback* a copiar + verificar el tamaño
+  + borrar el original, en vez de fallar la operación.
+- **Abort + deshacer por ratio de error**, igual que la corrección
+  (`CORRECTION_ERROR_ABORT_RATIO`): si demasiados movimientos fallan, se
+  abandona el run y se deshacen los movimientos ya aplicados.
+- **Carpeta base.** El modo automático (`auto`) pela las subcarpetas de fecha
+  desde la más profunda hacia arriba (año/mes/día o una fecha compacta en un
+  solo nombre de carpeta), deteniéndose en la primera que no parezca fecha; es
+  una heurística "mejor esfuerzo" — para casos ambiguos (p. ej. una carpeta
+  llamada "12"), el usuario puede fijar la carpeta base manualmente o usar la
+  raíz de la sesión. La carpeta base manual se valida con la misma allowlist
+  de rutas que el resto de la aplicación (`core/security.py`).
+- **Fuente de la fecha (toggle).** "Fecha de sesión" usa la recomendada (si el
+  análisis marcó el archivo) o el EXIF ya registrado; "EXIF en vivo" relee el
+  archivo con exiftool en el momento de reorganizar (útil si ya se ejecutó una
+  corrección real antes).
+
 ## Recuperación manual
 
 Cada run de backup guarda un `manifest.json` con el mapeo original→backup. Si fuera

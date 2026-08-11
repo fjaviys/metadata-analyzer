@@ -130,7 +130,24 @@ CREATE TABLE IF NOT EXISTS file_overrides (
     FOREIGN KEY (session_id) REFERENCES analysis_sessions(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS reorganize_moves (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id     INTEGER,
+    run_id         TEXT,
+    original_path  TEXT NOT NULL,
+    new_path       TEXT,
+    dry_run        INTEGER DEFAULT 1,
+    status         TEXT DEFAULT 'pending',  -- pending|dry-run|moved|failed|skipped|reverted
+    reason         TEXT,
+    error          TEXT,
+    created_at     TEXT NOT NULL,
+    FOREIGN KEY (session_id) REFERENCES analysis_sessions(id) ON DELETE SET NULL
+);
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_fileov_path    ON file_overrides(session_id, path);
+CREATE INDEX IF NOT EXISTS idx_reorg_session      ON reorganize_moves(session_id);
+CREATE INDEX IF NOT EXISTS idx_reorg_run          ON reorganize_moves(run_id);
+CREATE INDEX IF NOT EXISTS idx_reorg_status       ON reorganize_moves(status);
 CREATE INDEX IF NOT EXISTS idx_overrides_session   ON path_overrides(session_id);
 CREATE INDEX IF NOT EXISTS idx_files_session      ON analyzed_files(session_id);
 CREATE INDEX IF NOT EXISTS idx_files_needs        ON analyzed_files(session_id, needs_correction);
@@ -504,6 +521,76 @@ class DatabaseManager:
             (run_id,),
         ).fetchall()
         return {r["status"]: r["n"] for r in rows}
+
+    # ------------------------------------------------------------------ reorganize (Fase 2)
+    def insert_reorganize_move(self, record: dict) -> int:
+        record = {**record}
+        record.setdefault("created_at", _now())
+        record.setdefault("dry_run", 1)
+        record.setdefault("status", "pending")
+        cols = ["session_id", "run_id", "original_path", "new_path", "dry_run",
+                "status", "reason", "error", "created_at"]
+        with self._tx() as c:
+            cur = c.execute(
+                f"INSERT INTO reorganize_moves({','.join(cols)}) VALUES({','.join('?'*len(cols))})",
+                tuple(record.get(k) for k in cols),
+            )
+            return int(cur.lastrowid)
+
+    def update_reorganize_move(self, move_id: int, **fields) -> None:
+        if not fields:
+            return
+        sets = ", ".join(f"{k}=?" for k in fields)
+        with self._tx() as c:
+            c.execute(
+                f"UPDATE reorganize_moves SET {sets} WHERE id=?",
+                (*fields.values(), move_id),
+            )
+
+    def get_reorganize_moves(self, session_id: Optional[int] = None,
+                             run_id: Optional[str] = None,
+                             only_changes: bool = False,
+                             limit: Optional[int] = None, offset: int = 0) -> list[dict]:
+        q = "SELECT * FROM reorganize_moves WHERE 1=1"
+        args: list[Any] = []
+        if session_id is not None:
+            q += " AND session_id=?"
+            args.append(session_id)
+        if run_id is not None:
+            q += " AND run_id=?"
+            args.append(run_id)
+        if only_changes:
+            q += " AND status != 'skipped'"
+        q += " ORDER BY id"
+        if limit is not None:
+            q += " LIMIT ? OFFSET ?"
+            args.extend([limit, offset])
+        return [dict(r) for r in self.conn.execute(q, args).fetchall()]
+
+    def count_reorganize_moves(self, run_id: str, only_changes: bool = False) -> int:
+        q = "SELECT COUNT(*) AS n FROM reorganize_moves WHERE run_id=?"
+        args: list[Any] = [run_id]
+        if only_changes:
+            q += " AND status != 'skipped'"
+        return int(self.conn.execute(q, args).fetchone()["n"])
+
+    def reorganize_stats(self, run_id: str) -> dict:
+        rows = self.conn.execute(
+            "SELECT status, COUNT(*) AS n FROM reorganize_moves WHERE run_id=? GROUP BY status",
+            (run_id,),
+        ).fetchall()
+        return {r["status"]: r["n"] for r in rows}
+
+    def list_reorganize_runs(self, session_id: int) -> list[dict]:
+        rows = self.conn.execute(
+            """SELECT run_id, MIN(created_at) AS started_at, MAX(dry_run) AS dry_run,
+                      SUM(status='moved') AS moved, SUM(status='reverted') AS reverted,
+                      SUM(status='failed') AS failed, COUNT(*) AS total
+               FROM reorganize_moves WHERE session_id=? GROUP BY run_id
+               ORDER BY started_at DESC""",
+            (session_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
 
 __all__ = ["DatabaseManager", "SCHEMA_VERSION"]
