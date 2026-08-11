@@ -377,7 +377,9 @@ class DatabaseManager:
             )
 
     def get_corrections(self, session_id: Optional[int] = None,
-                        run_id: Optional[str] = None) -> list[dict]:
+                        run_id: Optional[str] = None,
+                        only_changes: bool = False,
+                        limit: Optional[int] = None, offset: int = 0) -> list[dict]:
         q = "SELECT * FROM corrections WHERE 1=1"
         args: list[Any] = []
         if session_id is not None:
@@ -386,8 +388,20 @@ class DatabaseManager:
         if run_id is not None:
             q += " AND run_id=?"
             args.append(run_id)
+        if only_changes:
+            q += " AND correction_type != 'skip' AND status != 'skipped'"
         q += " ORDER BY id"
+        if limit is not None:
+            q += " LIMIT ? OFFSET ?"
+            args.extend([limit, offset])
         return [dict(r) for r in self.conn.execute(q, args).fetchall()]
+
+    def count_corrections(self, run_id: str, only_changes: bool = False) -> int:
+        q = "SELECT COUNT(*) AS n FROM corrections WHERE run_id=?"
+        args: list[Any] = [run_id]
+        if only_changes:
+            q += " AND correction_type != 'skip' AND status != 'skipped'"
+        return int(self.conn.execute(q, args).fetchone()["n"])
 
     def correction_stats(self, run_id: str) -> dict:
         rows = self.conn.execute(

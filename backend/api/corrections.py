@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from core.exceptions import ConfirmationRequiredError, MetadataAnalyzerError
 from database.db import get_db
@@ -26,7 +26,18 @@ async def create_correction(req: CorrectionRequest):
 
 
 @router.get("/{run_id}")
-async def get_run(run_id: str):
-    corrs = get_db().get_corrections(run_id=run_id)
-    stats = get_db().correction_stats(run_id)
-    return {"run_id": run_id, "stats": stats, "corrections": corrs}
+async def get_run(run_id: str,
+                  only_changes: bool = False,
+                  limit: int = Query(500, le=5000),
+                  offset: int = 0):
+    db = get_db()
+    corrs = db.get_corrections(run_id=run_id, only_changes=only_changes,
+                               limit=limit, offset=offset)
+    return {
+        "run_id": run_id,
+        "stats": db.correction_stats(run_id),
+        "total": db.count_corrections(run_id, only_changes=only_changes),
+        "count": len(corrs),
+        "offset": offset,
+        "corrections": corrs,
+    }

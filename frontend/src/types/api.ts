@@ -107,6 +107,22 @@ export interface CorrectionStarted {
   status: string;
 }
 
+export interface CorrectionRow {
+  id: number;
+  path: string;
+  dry_run: number;
+  correction_type: string;      // set_date | cleanup | skip
+  tag?: string | null;
+  original_value?: string | null;
+  new_value?: string | null;
+  precision?: string | null;
+  source?: string | null;
+  status: string;               // dry-run | verified | failed | reverted | skipped
+  verified: number;
+  error?: string | null;
+  created_at?: string;
+}
+
 export interface ProgressEvent {
   phase?: 'analysis' | 'correction';
   type?: string;
@@ -121,6 +137,8 @@ export interface ProgressEvent {
   failed?: number;
   skipped?: number;
   reverted?: number;
+  applied?: number;
+  planned?: number;
   aborted?: boolean;
   abort_reason?: string | null;
   dry_run?: boolean;

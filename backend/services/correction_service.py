@@ -123,6 +123,7 @@ def _run_correction_blocking(run_id: str, session_id: int, candidates: list[dict
             "dry_run": dry_run, "processed": result.total, "total": result.total,
             "percent": 100.0, "verified": result.verified, "failed": result.failed,
             "skipped": result.skipped, "reverted": result.reverted,
+            "applied": result.applied, "planned": result.planned,
             "aborted": result.aborted, "abort_reason": result.abort_reason,
         })
         log.info(f"corrección finalizada run={run_id} verificados={result.verified} "

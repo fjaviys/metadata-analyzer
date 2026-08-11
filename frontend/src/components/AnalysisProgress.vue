@@ -24,7 +24,10 @@
       <div v-if="phase === 'analysis'">
         <span class="text-slate-400">A corregir:</span> {{ ev?.needs_correction ?? 0 }}
       </div>
-      <div v-if="phase === 'correction'">
+      <div v-if="phase === 'correction' && ev?.dry_run">
+        <span class="text-slate-400">Propuestos:</span> {{ ev?.applied ?? 0 }}
+      </div>
+      <div v-if="phase === 'correction' && !ev?.dry_run">
         <span class="text-slate-400">Verificados:</span> {{ ev?.verified ?? 0 }}
       </div>
       <div v-if="phase === 'correction'">
@@ -63,7 +66,7 @@ const aborted = computed(() => !!ev.value?.aborted);
 const doneMessage = computed(() => {
   if (phase.value === 'correction') {
     return ev.value?.dry_run
-      ? `Simulación completada: ${ev.value?.verified ?? 0} cambios propuestos.`
+      ? `Simulación completada: ${ev.value?.applied ?? 0} cambios propuestos, ${ev.value?.skipped ?? 0} sin cambios.`
       : `Corrección completada: ${ev.value?.verified ?? 0} verificados, ${ev.value?.failed ?? 0} fallidos.`;
   }
   return `Análisis completado: ${ev.value?.needs_correction ?? 0} archivos a corregir.`;

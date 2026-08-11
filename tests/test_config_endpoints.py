@@ -36,6 +36,35 @@ import app as backend_app  # noqa: E402
 from services.correction_service import _under_folder, _candidates  # noqa: E402
 from database.db import get_db  # noqa: E402
 
+
+def test_corrections_run_pagination_and_filter():
+    db = get_db()
+    sid = db.create_session("/tmp", "local")
+    # 3 propuestos + 1 skip
+    for i in range(3):
+        db.insert_correction({
+            "session_id": sid, "run_id": "runX", "path": f"/tmp/f{i}.jpg", "dry_run": 1,
+            "correction_type": "set_date", "original_value": "2010:01:01 00:00:00",
+            "new_value": "2020:07:02 00:00:00", "status": "dry-run",
+        })
+    db.insert_correction({
+        "session_id": sid, "run_id": "runX", "path": "/tmp/skip.jpg", "dry_run": 1,
+        "correction_type": "skip", "status": "skipped",
+    })
+    # only_changes excluye el skip
+    r = client.get("/api/corrections/runX", params={"only_changes": True})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["total"] == 3
+    assert all(c["correction_type"] != "skip" for c in body["corrections"])
+    assert body["corrections"][0]["original_value"] == "2010:01:01 00:00:00"
+    # sin filtro: incluye el skip (4)
+    r2 = client.get("/api/corrections/runX")
+    assert r2.json()["total"] == 4
+    # paginación
+    r3 = client.get("/api/corrections/runX", params={"only_changes": True, "limit": 2, "offset": 0})
+    assert r3.json()["count"] == 2
+
 client = TestClient(backend_app.app)
 
 

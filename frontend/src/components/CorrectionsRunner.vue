@@ -49,7 +49,10 @@
         <AlertBox v-if="error" variant="error" :message="error" />
       </div>
 
-      <AnalysisProgress v-if="runId" kind="run" :id="runId" :key="runId" />
+      <AnalysisProgress v-if="runId" kind="run" :id="runId" :key="runId"
+                        @done="onRunDone" />
+
+      <CorrectionResults v-if="finishedRunId" :run-id="finishedRunId" :key="'res-' + finishedRunId" />
     </template>
   </div>
 </template>
@@ -60,8 +63,10 @@ import { api, ApiError } from '../api/client';
 import type { FolderNode, SessionSummary } from '../types/api';
 import AlertBox from './AlertBox.vue';
 import AnalysisProgress from './AnalysisProgress.vue';
+import CorrectionResults from './CorrectionResults.vue';
 import FolderTreeSelector from './FolderTreeSelector.vue';
 import LoadingSpinner from './LoadingSpinner.vue';
+import type { ProgressEvent } from '../types/api';
 
 const sessions = ref<SessionSummary[]>([]);
 const sessionId = ref(0);
@@ -71,7 +76,12 @@ const dryRun = ref(true);
 const confirmReal = ref(false);
 const running = ref(false);
 const runId = ref('');
+const finishedRunId = ref('');
 const error = ref('');
+
+function onRunDone(ev: ProgressEvent) {
+  if (ev.status === 'completed') finishedRunId.value = runId.value;
+}
 
 onMounted(async () => {
   try {
@@ -93,6 +103,7 @@ async function run() {
   running.value = true;
   error.value = '';
   runId.value = '';
+  finishedRunId.value = '';
   try {
     const res = await api.startCorrection({
       session_id: sessionId.value,

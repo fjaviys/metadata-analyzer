@@ -2,7 +2,7 @@
 
 import type {
   AnalysisRequest, AnalysisStarted, AnalyzedFile, BrowseResult, ConnectionTestRequest,
-  ConnectionTestResult, CorrectionRequest, CorrectionStarted, FolderNode,
+  ConnectionTestResult, CorrectionRequest, CorrectionRow, CorrectionStarted, FolderNode,
   FormatCatalog, ProgressEvent, SessionSummary,
 } from '../types/api';
 
@@ -97,9 +97,17 @@ export const api = {
   startCorrection: (body: CorrectionRequest) =>
     request<CorrectionStarted>('/corrections', { method: 'POST', body: JSON.stringify(body) }),
 
-  getCorrectionRun: (runId: string) =>
-    request<{ run_id: string; stats: Record<string, number>;
-              corrections: Array<Record<string, unknown>> }>(`/corrections/${runId}`),
+  getCorrectionRun: (runId: string, opts: { only_changes?: boolean;
+                                            limit?: number; offset?: number } = {}) => {
+    const q = new URLSearchParams();
+    if (opts.only_changes) q.set('only_changes', 'true');
+    if (opts.limit) q.set('limit', String(opts.limit));
+    if (opts.offset) q.set('offset', String(opts.offset));
+    return request<{
+      run_id: string; stats: Record<string, number>; total: number; count: number;
+      offset: number; corrections: CorrectionRow[];
+    }>(`/corrections/${runId}?${q.toString()}`);
+  },
 };
 
 // --- WebSocket de progreso ---
