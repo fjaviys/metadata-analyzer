@@ -46,6 +46,7 @@ import app as backend_app  # noqa: E402
 from database.db import get_db  # noqa: E402
 import services.analysis_service as an  # noqa: E402
 import services.correction_service as co  # noqa: E402
+import services.plan_service as pl  # noqa: E402
 import services.reorganize_service as ro  # noqa: E402
 
 client = TestClient(backend_app.app)
@@ -93,6 +94,115 @@ def test_reorganize_layout_presets():
     r = client.get("/api/reorganize/layout-presets")
     assert r.status_code == 200
     assert any(p["layout"] == "AAAA/MM" for p in r.json()["presets"])
+
+
+def test_plan_requires_confirmation():
+    db = get_db()
+    sid = db.create_session(tempfile.gettempdir(), "local")
+    db.finish_session(sid, {"total_files": 0})
+    r = client.post("/api/plan/run", json={
+        "session_id": sid, "dry_run": False, "confirm_real_write": False})
+    assert r.status_code == 428
+    assert "confirm" in r.json()["detail"].lower() or "dry-run" in r.json()["detail"].lower()
+
+
+def test_folder_decision_upsert_via_api():
+    db = get_db()
+    sid = db.create_session(tempfile.gettempdir(), "local")
+    db.finish_session(sid, {"total_files": 0})
+    folder = os.path.join(tempfile.gettempdir(), "algunacarpeta")
+
+    r = client.post("/api/plan/folder-decision", json={
+        "session_id": sid, "folder": folder,
+        "metadata_mode": "keep", "structure_mode": "update"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["metadata_mode"] == "keep" and body["structure_mode"] == "update"
+    assert body["structure_layout"] is None
+
+    # actualización parcial: solo toca structure_layout, metadata_mode debe conservarse
+    r = client.post("/api/plan/folder-decision", json={
+        "session_id": sid, "folder": folder, "structure_layout": "AAAA-MM"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["metadata_mode"] == "keep"  # conservado
+    assert body["structure_layout"] == "AAAA-MM"
+
+    r = client.get(f"/api/plan/folder-decisions?session_id={sid}")
+    assert r.status_code == 200
+    assert len(r.json()["decisions"]) == 1
+
+    r = client.delete(f"/api/plan/folder-decision?session_id={sid}&folder={folder}")
+    assert r.status_code == 200
+    assert client.get(f"/api/plan/folder-decisions?session_id={sid}").json()["decisions"] == []
+
+
+@pytest.mark.skipif(not _REAL, reason="requiere Pillow y exiftool")
+def test_e2e_unified_plan_two_folders_different_axes():
+    """
+    folderA: metadatos=update (default), estructura=update (layout por defecto)
+      -> se corrige el EXIF Y se mueve.
+    folderB: metadatos=keep, estructura=update con layout custom 'AAAA-MM'
+      -> el EXIF NO cambia, pero se mueve usando la fecha recomendada de sesión.
+    """
+    loop = asyncio.new_event_loop()
+    t = threading.Thread(target=loop.run_forever, daemon=True)
+    t.start()
+    try:
+        media = tempfile.mkdtemp(prefix="ma_media_plan_", dir=tempfile.gettempdir())
+        folder_a = os.path.join(media, "folderA")
+        folder_b = os.path.join(media, "folderB")
+        os.makedirs(folder_a)
+        os.makedirs(folder_b)
+        file_a = os.path.join(folder_a, "IMG_20200702.jpg")
+        file_b = os.path.join(folder_b, "IMG_20180101.jpg")
+        _jpeg(file_a, exif_date="2015:01:01 00:00:00")   # incoherente con el nombre
+        _jpeg(file_b, exif_date="2010:01:01 00:00:00")   # incoherente con el nombre
+
+        db = get_db()
+        sid = db.create_session(media, "local")
+        an._run_analysis_blocking(sid, media, None, True, None, loop)
+        assert db.get_session(sid)["status"] == "completed"
+
+        db.set_folder_decision(sid, folder_a, structure_mode="update")
+        db.set_folder_decision(sid, folder_b, metadata_mode="keep",
+                               structure_mode="update", structure_layout="AAAA-MM")
+
+        correction_rows, reorganize_plans = pl.build_unified_plan(
+            sid, [], media, "auto", None, "AAAA/MM")
+
+        corrected_paths = {r["path"] for r in correction_rows}
+        assert file_a in corrected_paths
+        assert file_b not in corrected_paths  # metadata_mode='keep'
+
+        move_targets = {p.path: p.target for p in reorganize_plans if p.action == "move"}
+        assert move_targets[file_a] == os.path.join(folder_a, "2020", "07", "IMG_20200702.jpg")
+        assert move_targets[file_b] == os.path.join(folder_b, "2018-01", "IMG_20180101.jpg")
+
+        pl._run_unified_blocking("plan01", sid, correction_rows, reorganize_plans, False, loop)
+
+        # folderA: EXIF corregido Y movido
+        target_a = move_targets[file_a]
+        assert os.path.isfile(target_a)
+        assert not os.path.isfile(file_a)
+        assert ma.parse_exif_datetime(ma.run_exiftool([target_a])[0].get("DateTimeOriginal")) \
+            == ma.parse_exif_datetime("2020:07:02 00:00:00")
+
+        # folderB: EXIF intacto (sigue siendo el incoherente original) pero SÍ movido
+        target_b = move_targets[file_b]
+        assert os.path.isfile(target_b)
+        assert not os.path.isfile(file_b)
+        assert ma.parse_exif_datetime(ma.run_exiftool([target_b])[0].get("DateTimeOriginal")) \
+            == ma.parse_exif_datetime("2010:01:01 00:00:00")
+
+        corrs = db.get_corrections(run_id="plan01")
+        assert {c["path"] for c in corrs} == {file_a}
+        moves = db.get_reorganize_moves(run_id="plan01")
+        assert {m["original_path"] for m in moves} == {file_a, file_b}
+        assert all(m["status"] == "moved" for m in moves)
+    finally:
+        loop.call_soon_threadsafe(loop.stop)
+        time.sleep(0.1)
 
 
 def _jpeg(path, exif_date=None):

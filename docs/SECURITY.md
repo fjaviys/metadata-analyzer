@@ -137,6 +137,32 @@ Mueve archivos a una estructura de carpetas por fecha **sin tocar sus metadatos*
   archivo con exiftool en el momento de reorganizar (útil si ya se ejecutó una
   corrección real antes).
 
+## Árbol de asignación unificado (Fase 3)
+
+Combina, por carpeta y por archivo, dos ejes independientes: **metadatos**
+(¿se corrige el EXIF?) y **estructura** (¿se mueve a una carpeta por fecha?),
+en una sola ejecución (dry-run/real) que primero corrige y luego mueve.
+
+- **Defaults seguros por carpeta** (sin decisión explícita): metadatos =
+  `update` (comportamiento histórico de Fase 1: se corrige lo que el análisis
+  marque), estructura = `keep` (nada se mueve salvo que el usuario lo pida
+  explícitamente). El eje "mover" nunca está activo por defecto.
+- **Herencia por profundidad de carpeta**: la carpeta más profunda que
+  contiene al archivo decide (igual criterio que `path_overrides`); una
+  decisión explícita en un archivo (`file_overrides`) tiene siempre prioridad
+  sobre la carpeta.
+- **"Mantener metadatos" no significa "ignorar la fecha conocida".** Si la
+  estructura se actualiza para un archivo cuyo metadato se mantiene, la
+  carpeta destino se calcula con la mejor fecha que la sesión conoce
+  (recomendada si el análisis la marcó, si no el EXIF), nunca inventada; el
+  EXIF del archivo permanece intacto.
+- **El layout de destino por carpeta es independiente del patrón de
+  detección** (`path_overrides`): son dos overrides distintos con propósitos
+  distintos y no se mezclan.
+- El **undo** de un run unificado solo revierte los **movimientos** (igual
+  que en Fase 2); las correcciones de metadatos no se deshacen automáticamente
+  y solo se pueden restaurar manualmente desde `data/backups/`.
+
 ## Recuperación manual
 
 Cada run de backup guarda un `manifest.json` con el mapeo original→backup. Si fuera

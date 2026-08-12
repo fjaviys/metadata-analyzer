@@ -2,9 +2,10 @@
 
 import type {
   AnalysisRequest, AnalysisStarted, AnalyzedFile, BrowseResult, ConnectionTestRequest,
-  ConnectionTestResult, CorrectionRequest, CorrectionRow, CorrectionStarted, FolderNode,
-  FormatCatalog, LayoutPreset, ProgressEvent, ReorganizeMove, ReorganizeRequest,
-  ReorganizeRunSummary, ReorganizeStarted, SessionSummary,
+  ConnectionTestResult, CorrectionRequest, CorrectionRow, CorrectionStarted, FolderDecision,
+  FolderNode, FormatCatalog, LayoutPreset, MetadataMode, ProgressEvent, ReorganizeMove,
+  ReorganizeRequest, ReorganizeRunSummary, ReorganizeStarted, SessionSummary, StructureMode,
+  UnifiedRunRequest, UnifiedRunResult, UnifiedRunStarted,
 } from '../types/api';
 
 // Config de runtime inyectada por el servidor (window.__MA_CONFIG__ en MainLayout).
@@ -176,6 +177,36 @@ export const api = {
   undoReorganize: (runId: string) =>
     request<{ undone: number; failed: Array<{ path: string; error: string }> }>(
       `/reorganize/${runId}/undo`, { method: 'POST' }),
+
+  // --- árbol de asignación unificado (Fase 3) ---
+  listFolderDecisions: (sessionId: number) =>
+    request<{ decisions: FolderDecision[] }>(`/plan/folder-decisions?session_id=${sessionId}`),
+
+  setFolderDecision: (body: { session_id: number; folder: string; metadata_mode?: MetadataMode;
+                              structure_mode?: StructureMode; structure_layout?: string;
+                              clear_structure_layout?: boolean }) =>
+    request<FolderDecision>('/plan/folder-decision', { method: 'POST', body: JSON.stringify(body) }),
+
+  deleteFolderDecision: (sessionId: number, folder: string) =>
+    request<{ deleted: string }>(
+      `/plan/folder-decision?session_id=${sessionId}&folder=${encodeURIComponent(folder)}`,
+      { method: 'DELETE' }),
+
+  startPlanRun: (body: UnifiedRunRequest) =>
+    request<UnifiedRunStarted>('/plan/run', { method: 'POST', body: JSON.stringify(body) }),
+
+  getPlanRun: (runId: string, opts: { only_changes?: boolean;
+                                      limit?: number; offset?: number } = {}) => {
+    const q = new URLSearchParams();
+    if (opts.only_changes) q.set('only_changes', 'true');
+    if (opts.limit) q.set('limit', String(opts.limit));
+    if (opts.offset) q.set('offset', String(opts.offset));
+    return request<UnifiedRunResult>(`/plan/run/${runId}?${q.toString()}`);
+  },
+
+  undoPlanRun: (runId: string) =>
+    request<{ undone: number; failed: Array<{ path: string; error: string }> }>(
+      `/plan/run/${runId}/undo`, { method: 'POST' }),
 };
 
 // --- WebSocket de progreso ---

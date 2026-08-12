@@ -7,7 +7,7 @@
         Esta sesión se analizó con una versión anterior del detector de fechas. Para
         aprovechar las mejoras (fechas en nombres/carpetas, formatos compactos…),
         <a class="font-medium underline" :href="`/analysis?root=${encodeURIComponent(summary.root)}`">vuelve a analizar esta carpeta</a>
-        antes de corregir.
+        antes de aplicar cambios.
       </AlertBox>
 
       <div class="flex flex-wrap items-center justify-between gap-3">
@@ -17,7 +17,7 @@
         </div>
         <div class="flex gap-2">
           <a class="btn-ghost" :href="reportUrl" target="_blank" rel="noopener">Informe PDF</a>
-          <a class="btn-primary" :href="`/corrections?session=${summary.id}`">Ir a corregir</a>
+          <a class="btn-primary" :href="`/apply?session=${summary.id}`">Aplicar cambios</a>
         </div>
       </div>
 

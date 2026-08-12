@@ -125,7 +125,7 @@ export interface CorrectionRow {
 }
 
 export interface ProgressEvent {
-  phase?: 'analysis' | 'correction' | 'reorganize';
+  phase?: 'analysis' | 'correction' | 'reorganize' | 'plan';
   type?: string;
   status?: string;
   current_file?: string;
@@ -141,6 +141,8 @@ export interface ProgressEvent {
   applied?: number;
   planned?: number;
   moved?: number;
+  metadata_failed?: number;
+  structure_failed?: number;
   aborted?: boolean;
   abort_reason?: string | null;
   dry_run?: boolean;
@@ -197,4 +199,45 @@ export interface ReorganizeRunSummary {
   reverted: number;
   failed: number;
   total: number;
+}
+
+// --------------------------- árbol de asignación unificado (Fase 3) ----------
+
+export type MetadataMode = 'update' | 'keep';
+export type StructureMode = 'update' | 'keep';
+
+export interface FolderDecision {
+  id: number;
+  session_id: number;
+  folder: string;
+  metadata_mode: MetadataMode;
+  structure_mode: StructureMode;
+  structure_layout: string | null;
+  created_at?: string;
+}
+
+export interface UnifiedRunRequest {
+  session_id: number;
+  subfolders?: string[];
+  dry_run: boolean;
+  confirm_real_write?: boolean;
+  base_mode: BaseMode;
+  base_folder?: string | null;
+  layout: string;
+}
+
+export interface UnifiedRunStarted {
+  run_id: string;
+  dry_run: boolean;
+  total_candidates: number;
+  metadata_candidates: number;
+  structure_candidates: number;
+  status: string;
+}
+
+export interface UnifiedRunResult {
+  run_id: string;
+  metadata: { stats: Record<string, number>; total: number; count: number; rows: CorrectionRow[] };
+  structure: { stats: Record<string, number>; total: number; count: number; rows: ReorganizeMove[] };
+  offset: number;
 }

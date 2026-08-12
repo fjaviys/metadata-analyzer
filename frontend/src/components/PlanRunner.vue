@@ -3,7 +3,7 @@
     <div class="card">
       <label class="label">Sesión de análisis</label>
       <div class="flex gap-2">
-        <select v-model.number="sessionId" class="input" @change="loadTree">
+        <select v-model.number="sessionId" class="input" @change="load">
           <option :value="0" disabled>Selecciona una sesión…</option>
           <option v-for="s in sessions" :key="s.id" :value="s.id">
             #{{ s.id }} · {{ s.root }} · {{ s.total_files }} archivos
@@ -13,36 +13,34 @@
     </div>
 
     <AlertBox v-if="!sessionId" variant="info"
-      message="Elige una sesión ya analizada. La reorganización mueve archivos según su fecha, sin tocar metadatos." />
+      message="Elige una sesión ya analizada. Cada carpeta empieza con 'metadatos: actualizar' + 'estructura: mantener' (el comportamiento seguro por defecto)." />
 
     <template v-else>
-      <FolderTreeSelector :tree="tree" @update:selected="selected = $event" />
+      <PatternOverrideEditor :session-id="sessionId" :root="sessionRoot"
+                             @changed="changed = true; load()" />
 
-      <div class="card space-y-4">
-        <p class="font-semibold text-slate-700">Carpeta base</p>
-        <div class="flex flex-wrap gap-4 text-sm text-slate-700">
-          <label class="flex items-center gap-2">
-            <input type="radio" value="auto" v-model="baseMode" />
-            Quitar automáticamente las subcarpetas de fecha (recomendado)
-          </label>
-          <label class="flex items-center gap-2">
-            <input type="radio" value="root" v-model="baseMode" />
-            Raíz de la sesión
-          </label>
-          <label class="flex items-center gap-2">
-            <input type="radio" value="manual" v-model="baseMode" />
-            Carpeta manual
-          </label>
-        </div>
-        <FolderBrowser v-if="baseMode === 'manual'" v-model="baseFolder"
-                       label="Carpeta base" :placeholder="sessionRoot" />
-        <p v-if="baseMode === 'auto'" class="text-xs text-slate-500">
-          Ejemplo: <code>fotos/2009/08/02/IMG.jpg</code> → carpeta base <code>fotos/</code>.
-        </p>
+      <LoadingSpinner v-if="loadingFiles" label="Cargando archivos…" />
+      <div v-else class="card">
+        <AssignmentTree :session-id="sessionId" :root="sessionRoot" :files="files"
+                        @changed="changed = true" />
       </div>
 
       <div class="card space-y-4">
-        <p class="font-semibold text-slate-700">Estructura de carpetas destino</p>
+        <p class="font-semibold text-slate-700">Carpeta base para mover (cuando aplique)</p>
+        <div class="flex flex-wrap gap-4 text-sm text-slate-700">
+          <label class="flex items-center gap-2">
+            <input type="radio" value="auto" v-model="baseMode" /> Quitar subcarpetas de fecha (recomendado)
+          </label>
+          <label class="flex items-center gap-2">
+            <input type="radio" value="root" v-model="baseMode" /> Raíz de la sesión
+          </label>
+          <label class="flex items-center gap-2">
+            <input type="radio" value="manual" v-model="baseMode" /> Carpeta manual
+          </label>
+        </div>
+        <FolderBrowser v-if="baseMode === 'manual'" v-model="baseFolder" label="Carpeta base" />
+
+        <p class="font-semibold text-slate-700">Layout por defecto (carpetas sin patrón propio)</p>
         <div class="flex flex-wrap gap-2">
           <button v-for="p in presets" :key="p.key" type="button"
                   class="rounded-full border px-3 py-1 text-xs"
@@ -52,31 +50,11 @@
             {{ p.label }}
           </button>
         </div>
-        <div>
-          <label class="label">Patrón personalizado (tokens AAAA/MM/DD)</label>
-          <input v-model="layout" class="input font-mono" placeholder="AAAA/MM" />
-        </div>
-        <p class="text-xs text-slate-500">
-          Ejemplo con la fecha 2020-07-02: <code>{{ layoutExample }}</code>
-        </p>
+        <input v-model="layout" class="input font-mono" placeholder="AAAA/MM" />
       </div>
 
-      <div class="card space-y-4">
-        <p class="font-semibold text-slate-700">Fecha a usar</p>
-        <div class="flex flex-wrap gap-4 text-sm text-slate-700">
-          <label class="flex items-center gap-2">
-            <input type="radio" value="session" v-model="dateSource" />
-            Fecha de la sesión (recomendada / ya corregida)
-          </label>
-          <label class="flex items-center gap-2">
-            <input type="radio" value="exif_live" v-model="dateSource" />
-            Releer el EXIF actual del archivo
-          </label>
-        </div>
-        <p class="text-xs text-slate-500">
-          Nunca se fabrica una fecha: un archivo sin fecha fiable se omite y se reporta.
-        </p>
-      </div>
+      <AlertBox v-if="changed" variant="info"
+        message="Has cambiado decisiones. Vuelve a simular para ver el resultado actualizado." />
 
       <div class="card space-y-4">
         <div class="flex items-center gap-3">
@@ -84,35 +62,34 @@
             <input type="radio" :value="true" v-model="dryRun" /> Simulación (dry-run)
           </label>
           <label class="flex items-center gap-2 text-sm font-medium text-slate-700">
-            <input type="radio" :value="false" v-model="dryRun" /> Reorganización real
+            <input type="radio" :value="false" v-model="dryRun" /> Aplicar cambios reales
           </label>
         </div>
 
         <AlertBox v-if="dryRun" variant="info"
-          message="Modo simulación: NO se mueve nada. Verás qué movimientos se propondrían." />
+          message="Modo simulación: NO se escribe ni se mueve nada. Verás qué cambios se propondrían en ambos ejes." />
         <template v-else>
           <AlertBox variant="warning"
-            message="Modo REAL: se moverán tus archivos a la nueva estructura de carpetas. Cada movimiento queda registrado para poder deshacerlo. Si demasiados archivos fallan, se aborta y se deshace." />
+            message="Modo REAL: se corregirán metadatos y/o se moverán archivos según las decisiones del árbol. Backup + verificación en metadatos; movimientos registrados para poder deshacerlos." />
           <label class="flex items-start gap-2 text-sm text-slate-700">
             <input type="checkbox" v-model="confirmReal" class="mt-0.5 rounded border-slate-300" />
-            <span>Confirmo que quiero mover los archivos seleccionados a la nueva estructura
-              de carpetas.</span>
+            <span>Confirmo que quiero aplicar estos cambios a los archivos seleccionados.</span>
           </label>
         </template>
 
         <button class="btn-primary" :class="{ 'btn-danger': !dryRun }"
-                :disabled="running || (!dryRun && !confirmReal) || !layout" @click="run">
+                :disabled="running || (!dryRun && !confirmReal)" @click="run">
           <LoadingSpinner v-if="running" label="Iniciando…" />
-          <span v-else>{{ dryRun ? 'Simular reorganización' : 'Ejecutar reorganización real' }}</span>
+          <span v-else>{{ dryRun ? 'Simular' : 'Aplicar cambios reales' }}</span>
         </button>
 
         <AlertBox v-if="error" variant="error" :message="error" />
       </div>
 
-      <AnalysisProgress v-if="runId" kind="run" :id="runId" :key="runId"
-                        @done="onRunDone" />
+      <AnalysisProgress v-if="runId" kind="run" :id="runId" :key="runId" @done="onRunDone" />
 
-      <ReorganizeResults v-if="finishedRunId" :run-id="finishedRunId" :key="'res-' + finishedRunId" />
+      <PlanResults v-if="finishedRunId" :run-id="finishedRunId" :key="'res-' + finishedRunId"
+                  @changed="changed = true" />
     </template>
   </div>
 </template>
@@ -120,43 +97,35 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { api, ApiError } from '../api/client';
-import type {
-  BaseMode, DateSource, FolderNode, LayoutPreset, ProgressEvent, SessionSummary,
-} from '../types/api';
+import type { AnalyzedFile, BaseMode, LayoutPreset, ProgressEvent, SessionSummary } from '../types/api';
 import AlertBox from './AlertBox.vue';
 import AnalysisProgress from './AnalysisProgress.vue';
+import AssignmentTree from './AssignmentTree.vue';
 import FolderBrowser from './FolderBrowser.vue';
-import FolderTreeSelector from './FolderTreeSelector.vue';
 import LoadingSpinner from './LoadingSpinner.vue';
-import ReorganizeResults from './ReorganizeResults.vue';
+import PatternOverrideEditor from './PatternOverrideEditor.vue';
+import PlanResults from './PlanResults.vue';
 
 const sessions = ref<SessionSummary[]>([]);
 const sessionId = ref(0);
-const tree = ref<FolderNode[]>([]);
-const selected = ref<string[]>([]);
+const files = ref<AnalyzedFile[]>([]);
+const loadingFiles = ref(false);
 
 const baseMode = ref<BaseMode>('auto');
 const baseFolder = ref('');
 const presets = ref<LayoutPreset[]>([]);
 const layout = ref('AAAA/MM');
-const dateSource = ref<DateSource>('session');
 
 const dryRun = ref(true);
 const confirmReal = ref(false);
 const running = ref(false);
 const runId = ref('');
 const finishedRunId = ref('');
+const changed = ref(false);
 const error = ref('');
 
 const sessionRoot = computed(() =>
   sessions.value.find((s) => s.id === sessionId.value)?.root || '');
-
-const layoutExample = computed(() => {
-  const dt = { y: 2020, m: '07', d: '02' };
-  return layout.value
-    .replace(/AAAA/g, String(dt.y)).replace(/AA/g, String(dt.y).slice(-2))
-    .replace(/MM/g, dt.m).replace(/DD/g, dt.d) || '—';
-});
 
 function onRunDone(ev: ProgressEvent) {
   if (ev.status === 'completed') finishedRunId.value = runId.value;
@@ -171,14 +140,15 @@ onMounted(async () => {
   } catch { presets.value = []; }
   const url = new URL(location.href);
   const q = url.searchParams.get('session');
-  if (q) { sessionId.value = Number(q); await loadTree(); }
+  if (q) { sessionId.value = Number(q); await load(); }
 });
 
-async function loadTree() {
+async function load() {
   if (!sessionId.value) return;
+  loadingFiles.value = true;
   try {
-    tree.value = (await api.getTree(sessionId.value)).tree;
-  } catch { tree.value = []; }
+    files.value = (await api.getFiles(sessionId.value, { limit: 5000 })).files;
+  } catch { files.value = []; } finally { loadingFiles.value = false; }
 }
 
 async function run() {
@@ -186,16 +156,15 @@ async function run() {
   error.value = '';
   runId.value = '';
   finishedRunId.value = '';
+  changed.value = false;
   try {
-    const res = await api.startReorganize({
+    const res = await api.startPlanRun({
       session_id: sessionId.value,
-      subfolders: selected.value,
       dry_run: dryRun.value,
       confirm_real_write: !dryRun.value && confirmReal.value,
       base_mode: baseMode.value,
       base_folder: baseMode.value === 'manual' ? baseFolder.value : undefined,
       layout: layout.value,
-      date_source: dateSource.value,
     });
     runId.value = res.run_id;
   } catch (e) {

@@ -1,0 +1,19 @@
+---
+import MainLayout from '../layouts/MainLayout.astro';
+import PlanRunner from '../components/PlanRunner.vue';
+import StepNav from '../components/StepNav.astro';
+---
+<MainLayout title="Aplicar cambios · Metadata Analyzer" active="apply">
+  <h1 class="mb-2 text-xl font-semibold text-slate-800">Aplicar cambios</h1>
+  <p class="mb-6 max-w-2xl text-slate-600">
+    Un único árbol para decidir, por carpeta y por archivo, si se corrigen los
+    metadatos y/o se mueven los archivos a una estructura de carpetas por fecha.
+    Empieza siempre por el modo simulación (dry-run). Aplicar cambios reales
+    requiere confirmación explícita.
+  </p>
+  <PlanRunner client:load />
+  <StepNav
+    prev={{ href: '/analysis', label: 'Análisis' }}
+    next={{ href: '/', label: 'Inicio' }}
+  />
+</MainLayout>

@@ -159,6 +159,42 @@ class ReorganizeStarted(BaseModel):
     status: str = "running"
 
 
+# --------------------------- árbol de asignación unificado (Fase 3) ---------
+
+class FolderDecisionRequest(BaseModel):
+    session_id: int
+    folder: str
+    metadata_mode: Optional[Literal["update", "keep"]] = None
+    structure_mode: Optional[Literal["update", "keep"]] = None
+    structure_layout: Optional[str] = Field(
+        None, description="Patrón AAAA/MM… custom para esta carpeta; "
+                          "si se omite el campo, no se toca el valor previo")
+    clear_structure_layout: bool = Field(
+        False, description="True para volver a usar el layout global del run "
+                           "(borra el patrón custom de esta carpeta)")
+
+
+class UnifiedRunRequest(BaseModel):
+    session_id: int
+    subfolders: list[str] = Field(default_factory=list,
+                                  description="Subcarpetas seleccionadas (vacío = todas)")
+    dry_run: bool = True
+    confirm_real_write: bool = Field(
+        False, description="Debe ser True para aplicar cambios REALES")
+    base_mode: Literal["auto", "root", "manual"] = "auto"
+    base_folder: Optional[str] = Field(None, description="Solo si base_mode='manual'")
+    layout: str = Field("AAAA/MM", description="Layout destino por defecto del run")
+
+
+class UnifiedRunStarted(BaseModel):
+    run_id: str
+    dry_run: bool
+    total_candidates: int
+    metadata_candidates: int
+    structure_candidates: int
+    status: str = "running"
+
+
 class ApiError(BaseModel):
     error: str
     detail: Optional[str] = None

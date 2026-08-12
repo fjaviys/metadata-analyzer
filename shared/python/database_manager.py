@@ -144,10 +144,22 @@ CREATE TABLE IF NOT EXISTS reorganize_moves (
     FOREIGN KEY (session_id) REFERENCES analysis_sessions(id) ON DELETE SET NULL
 );
 
+CREATE TABLE IF NOT EXISTS folder_decisions (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id        INTEGER NOT NULL,
+    folder            TEXT NOT NULL,
+    metadata_mode     TEXT DEFAULT 'update',   -- 'update' | 'keep'
+    structure_mode    TEXT DEFAULT 'keep',     -- 'update' | 'keep'
+    structure_layout  TEXT,                    -- patrón AAAA/MM… custom; NULL = layout del run
+    created_at        TEXT NOT NULL,
+    FOREIGN KEY (session_id) REFERENCES analysis_sessions(id) ON DELETE CASCADE
+);
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_fileov_path    ON file_overrides(session_id, path);
 CREATE INDEX IF NOT EXISTS idx_reorg_session      ON reorganize_moves(session_id);
 CREATE INDEX IF NOT EXISTS idx_reorg_run          ON reorganize_moves(run_id);
 CREATE INDEX IF NOT EXISTS idx_reorg_status       ON reorganize_moves(status);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_folderdec_folder ON folder_decisions(session_id, folder);
 CREATE INDEX IF NOT EXISTS idx_overrides_session   ON path_overrides(session_id);
 CREATE INDEX IF NOT EXISTS idx_files_session      ON analyzed_files(session_id);
 CREATE INDEX IF NOT EXISTS idx_files_needs        ON analyzed_files(session_id, needs_correction);
@@ -591,6 +603,49 @@ class DatabaseManager:
             (session_id,),
         ).fetchall()
         return [dict(r) for r in rows]
+
+    # ------------------------------------------------------------------ folder_decisions (Fase 3)
+    def set_folder_decision(self, session_id: int, folder: str, **fields) -> int:
+        """
+        Upsert de la decisión de una carpeta sobre los dos ejes (metadatos/
+        estructura). Los campos NO incluidos en `fields` conservan su valor
+        previo (o el default si la fila no existía todavía). Campos válidos:
+        metadata_mode ('update'|'keep'), structure_mode ('update'|'keep'),
+        structure_layout (patrón custom o None).
+        """
+        existing = self.get_folder_decision(session_id, folder)
+        merged = {
+            "metadata_mode": existing["metadata_mode"] if existing else "update",
+            "structure_mode": existing["structure_mode"] if existing else "keep",
+            "structure_layout": existing["structure_layout"] if existing else None,
+        }
+        merged.update(fields)
+        with self._tx() as c:
+            c.execute("DELETE FROM folder_decisions WHERE session_id=? AND folder=?",
+                      (session_id, folder))
+            cur = c.execute(
+                "INSERT INTO folder_decisions(session_id, folder, metadata_mode, "
+                "structure_mode, structure_layout, created_at) VALUES(?,?,?,?,?,?)",
+                (session_id, folder, merged["metadata_mode"], merged["structure_mode"],
+                 merged["structure_layout"], _now()))
+            return int(cur.lastrowid)
+
+    def get_folder_decision(self, session_id: int, folder: str) -> Optional[dict]:
+        r = self.conn.execute(
+            "SELECT * FROM folder_decisions WHERE session_id=? AND folder=?",
+            (session_id, folder)).fetchone()
+        return dict(r) if r else None
+
+    def get_folder_decisions(self, session_id: int) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT * FROM folder_decisions WHERE session_id=? ORDER BY LENGTH(folder) DESC, id",
+            (session_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def delete_folder_decision(self, session_id: int, folder: str) -> None:
+        with self._tx() as c:
+            c.execute("DELETE FROM folder_decisions WHERE session_id=? AND folder=?",
+                      (session_id, folder))
 
 
 __all__ = ["DatabaseManager", "SCHEMA_VERSION"]

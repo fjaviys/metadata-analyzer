@@ -40,6 +40,12 @@
       <div v-if="phase === 'reorganize'">
         <span class="text-slate-400">Fallidos:</span> {{ ev?.failed ?? 0 }}
       </div>
+      <div v-if="phase === 'plan'">
+        <span class="text-slate-400">Metadatos verificados:</span> {{ ev?.verified ?? 0 }}
+      </div>
+      <div v-if="phase === 'plan'">
+        <span class="text-slate-400">Movidos:</span> {{ ev?.moved ?? 0 }}
+      </div>
     </div>
 
     <p v-if="ev?.current_file" class="truncate text-xs text-slate-400" :title="ev.current_file">
@@ -70,6 +76,7 @@ const phase = computed(() => ev.value?.phase ?? (props.kind === 'run' ? 'correct
 const phaseLabel = computed(() => {
   if (phase.value === 'correction') return 'Corrigiendo metadatos';
   if (phase.value === 'reorganize') return 'Reorganizando carpetas';
+  if (phase.value === 'plan') return 'Aplicando cambios';
   return 'Analizando';
 });
 const done = computed(() => ev.value?.status === 'completed');
@@ -84,6 +91,12 @@ const doneMessage = computed(() => {
     return ev.value?.dry_run
       ? `Simulación completada: ${ev.value?.moved ?? 0} movimientos propuestos, ${ev.value?.skipped ?? 0} sin cambios.`
       : `Reorganización completada: ${ev.value?.moved ?? 0} movidos, ${ev.value?.failed ?? 0} fallidos.`;
+  }
+  if (phase.value === 'plan') {
+    return ev.value?.dry_run
+      ? `Simulación completada: ${ev.value?.applied ?? 0} cambios de metadatos y ${ev.value?.moved ?? 0} movimientos propuestos.`
+      : `Aplicado: ${ev.value?.verified ?? 0} metadatos verificados (${ev.value?.metadata_failed ?? 0} fallidos), ` +
+        `${ev.value?.moved ?? 0} archivos movidos (${ev.value?.structure_failed ?? 0} fallidos).`;
   }
   return `Análisis completado: ${ev.value?.needs_correction ?? 0} archivos a corregir.`;
 });
