@@ -19,12 +19,6 @@
       <PatternOverrideEditor :session-id="sessionId" :root="sessionRoot"
                              @changed="changed = true; load()" />
 
-      <LoadingSpinner v-if="loadingFiles" label="Cargando archivos…" />
-      <div v-else class="card">
-        <AssignmentTree :session-id="sessionId" :root="sessionRoot" :files="files"
-                        @changed="changed = true" />
-      </div>
-
       <div class="card space-y-4">
         <p class="font-semibold text-slate-700">Carpeta base para mover (cuando aplique)</p>
         <div class="flex flex-wrap gap-4 text-sm text-slate-700">
@@ -51,6 +45,12 @@
           </button>
         </div>
         <input v-model="layout" class="input font-mono" placeholder="AAAA/MM" />
+      </div>
+
+      <LoadingSpinner v-if="loadingFiles" label="Cargando archivos…" />
+      <div v-else class="card">
+        <AssignmentTree :session-id="sessionId" :root="sessionRoot" :files="files"
+                        :preview="preview" @changed="changed = true; refreshPreview()" />
       </div>
 
       <AlertBox v-if="changed" variant="info"
@@ -95,9 +95,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { api, ApiError } from '../api/client';
-import type { AnalyzedFile, BaseMode, LayoutPreset, ProgressEvent, SessionSummary } from '../types/api';
+import type {
+  AnalyzedFile, BaseMode, LayoutPreset, PlanPreviewResult, ProgressEvent, SessionSummary,
+} from '../types/api';
 import AlertBox from './AlertBox.vue';
 import AnalysisProgress from './AnalysisProgress.vue';
 import AssignmentTree from './AssignmentTree.vue';
@@ -110,6 +112,7 @@ const sessions = ref<SessionSummary[]>([]);
 const sessionId = ref(0);
 const files = ref<AnalyzedFile[]>([]);
 const loadingFiles = ref(false);
+const preview = ref<PlanPreviewResult | null>(null);
 
 const baseMode = ref<BaseMode>('auto');
 const baseFolder = ref('');
@@ -149,7 +152,27 @@ async function load() {
   try {
     files.value = (await api.getFiles(sessionId.value, { limit: 5000 })).files;
   } catch { files.value = []; } finally { loadingFiles.value = false; }
+  refreshPreview();
 }
+
+// --- previsualización (debounced): destino real por archivo/carpeta sin ejecutar nada ---
+let previewTimer: ReturnType<typeof setTimeout> | null = null;
+function refreshPreview() {
+  if (previewTimer) clearTimeout(previewTimer);
+  previewTimer = setTimeout(async () => {
+    if (!sessionId.value) { preview.value = null; return; }
+    try {
+      preview.value = await api.getPlanPreview({
+        session_id: sessionId.value,
+        base_mode: baseMode.value,
+        base_folder: baseMode.value === 'manual' ? baseFolder.value : undefined,
+        layout: layout.value,
+      });
+    } catch { preview.value = null; }
+  }, 400);
+}
+
+watch([baseMode, baseFolder, layout], refreshPreview);
 
 async function run() {
   running.value = true;

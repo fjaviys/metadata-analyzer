@@ -50,7 +50,8 @@
              class="flex flex-wrap items-center gap-2 py-1.5 text-sm"
              :style="{ paddingLeft: item.depth * 16 + 'px' }">
           <input type="checkbox" :checked="selectedFolders.has(item.path!)"
-                 @change="toggleFolderSelect(item.path!)" class="rounded border-slate-300" />
+                 @change="toggleFolderCascade(item.path!)" class="rounded border-slate-300"
+                 title="Selecciona/deselecciona esta carpeta y todo su contenido" />
           <button class="text-slate-400 w-4" @click="toggle(item.path!)">
             {{ collapsed.has(item.path!) ? '▸' : '▾' }}
           </button>
@@ -79,13 +80,19 @@
                  :value="decisions[item.path!]?.structure_layout || ''"
                  placeholder="layout del run"
                  @change="setFolder(item.path!, { structure_layout: ($event.target as HTMLInputElement).value || undefined, clear_structure_layout: !($event.target as HTMLInputElement).value })" />
+          <span v-if="effectiveFor(item.path!).structure_mode === 'update' && folderDestinations(item.path!).length"
+                class="text-xs text-amber-700">
+            → {{ folderDestinations(item.path!).slice(0, 4).map(relTo(item.path!)).join(', ') }}<template
+              v-if="folderDestinations(item.path!).length > 4">, +{{ folderDestinations(item.path!).length - 4 }} más</template>
+          </span>
         </div>
 
         <!-- archivo -->
         <div v-else class="py-1.5" :style="{ paddingLeft: item.depth * 16 + 8 + 'px' }">
           <div class="flex flex-wrap items-center gap-2 text-sm">
             <input type="checkbox" :checked="selectedFiles.has(item.file!.path)"
-                   @change="toggleFileSelect(item.file!.path)" class="rounded border-slate-300" />
+                   @click="onFileCheckboxClick($event, item.file!.path)" class="rounded border-slate-300"
+                   title="Clic: solo este · Ctrl/Cmd+clic: añadir/quitar · Shift+clic: rango" />
             <span class="text-slate-400">🖼️</span>
             <span class="truncate text-slate-700" :title="item.file!.path">{{ fileName(item.file!.path) }}</span>
             <span class="text-xs text-slate-400 font-mono">{{ item.file!.exif_date || 'sin fecha' }}</span>
@@ -96,8 +103,13 @@
                   class="rounded bg-brand-50 px-1.5 text-[10px] text-brand-700">
               {{ decisionLabel(item.file!.path) }}
             </span>
-            <span v-if="effectiveFor(dirOf(item.file!.path)).structure_mode === 'update'"
-                  class="rounded bg-amber-50 px-1.5 text-[10px] text-amber-700">se moverá</span>
+            <span v-if="moveDestination(item.file!.path)"
+                  class="rounded bg-amber-50 px-1.5 text-[10px] text-amber-700 font-mono">
+              → {{ moveDestination(item.file!.path) }}
+            </span>
+            <span v-else-if="skipReason(item.file!.path)"
+                  class="rounded bg-slate-100 px-1.5 text-[10px] text-slate-500"
+                  :title="skipReason(item.file!.path)">sin mover</span>
             <button class="ml-auto text-xs text-brand-600 hover:underline"
                     @click="openAction(item.file!.path)">
               {{ activePath === item.file!.path ? 'cerrar' : 'acción' }}
@@ -154,11 +166,46 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue';
 import { api } from '../api/client';
-import type { AnalyzedFile, FolderDecision, MetadataMode, StructureMode } from '../types/api';
+import type {
+  AnalyzedFile, FolderDecision, MetadataMode, PlanPreviewResult, StructureMode,
+} from '../types/api';
 import LoadingSpinner from './LoadingSpinner.vue';
 
-const props = defineProps<{ sessionId: number; root?: string; files: AnalyzedFile[] }>();
+const props = defineProps<{ sessionId: number; root?: string; files: AnalyzedFile[];
+                            preview?: PlanPreviewResult | null }>();
 const emit = defineEmits<{ (e: 'changed'): void }>();
+
+// --- previsualización (destino real por archivo / lista por carpeta) ---
+const movesByPath = computed(() => {
+  const m = new Map<string, { after_dir?: string; skip_reason?: string }>();
+  for (const mv of props.preview?.moves ?? []) m.set(mv.path, mv);
+  return m;
+});
+function rawDestination(path: string): string | null {
+  return movesByPath.value.get(path)?.after_dir ?? null;
+}
+function moveDestination(path: string): string | null {
+  const dir = rawDestination(path);
+  if (!dir) return null;
+  const r = (props.root || '').replace(/\/+$/, '');
+  return (r && dir.startsWith(r + '/') ? dir.slice(r.length + 1) : dir) + '/';
+}
+function skipReason(path: string): string | null {
+  return movesByPath.value.get(path)?.skip_reason ?? null;
+}
+function relTo(base: string) {
+  const b = base.replace(/\/+$/, '');
+  return (dir: string) => (dir.startsWith(b + '/') ? dir.slice(b.length + 1) : dir) + '/';
+}
+function folderDestinations(folderPath: string): string[] {
+  const { files } = collectDescendants(nodeByPath.value.get(folderPath)!);
+  const dirs = new Set<string>();
+  for (const p of files) {
+    const d = rawDestination(p);
+    if (d) dirs.add(d);
+  }
+  return [...dirs].sort();
+}
 
 // --- decisiones por carpeta ---
 const decisions = reactive<Record<string, FolderDecision>>({});
@@ -177,8 +224,6 @@ function effectiveFor(path: string) {
   }
   return best ?? DEFAULT_DECISION;
 }
-function dirOf(path: string) { return path.slice(0, path.lastIndexOf('/')) || path; }
-
 async function setFolder(folder: string, fields: { metadata_mode?: MetadataMode;
                          structure_mode?: StructureMode; structure_layout?: string;
                          clear_structure_layout?: boolean }) {
@@ -234,6 +279,36 @@ const allFolders = computed(() => {
   return acc;
 });
 
+const nodeByPath = computed(() => {
+  const m = new Map<string, Node>();
+  const walk = (n: Node) => { m.set(n.path, n); for (const c of n.folders.values()) walk(c); };
+  walk(tree.value);
+  return m;
+});
+
+function collectDescendants(node: Node): { folders: string[]; files: string[] } {
+  const folders: string[] = [];
+  const files: string[] = [];
+  const walk = (n: Node) => {
+    for (const c of n.folders.values()) { folders.push(c.path); walk(c); }
+    files.push(...n.files.map((f) => f.path));
+  };
+  walk(node);
+  return { folders, files };
+}
+
+function toggleFolderCascade(folderPath: string) {
+  const node = nodeByPath.value.get(folderPath);
+  if (!node) return;
+  const { folders, files } = collectDescendants(node);
+  const nowSelected = !selectedFolders.has(folderPath);
+  const apply = (set: Set<string>, keys: string[]) => {
+    for (const k of keys) { nowSelected ? set.add(k) : set.delete(k); }
+  };
+  apply(selectedFolders, [folderPath, ...folders]);
+  apply(selectedFiles, files);
+}
+
 function countNode(n: Node): number {
   n.count = n.files.length;
   for (const c of n.folders.values()) n.count += countNode(c);
@@ -265,8 +340,27 @@ function toggle(path: string) {
   collapsed.value = s;
 }
 function fileName(p: string) { return p.split('/').pop(); }
-function toggleFileSelect(p: string) { selectedFiles.has(p) ? selectedFiles.delete(p) : selectedFiles.add(p); }
-function toggleFolderSelect(p: string) { selectedFolders.has(p) ? selectedFolders.delete(p) : selectedFolders.add(p); }
+
+// --- selección de archivos estilo gestor de archivos (clic/Ctrl/Shift) ---
+const lastClickedFileIndex = ref<number | null>(null);
+
+function onFileCheckboxClick(e: MouseEvent, path: string) {
+  e.preventDefault();
+  const fileItems = visible.value.filter((i) => i.type === 'file');
+  const idx = fileItems.findIndex((i) => i.file!.path === path);
+
+  if (e.shiftKey && lastClickedFileIndex.value !== null) {
+    const [a, b] = [lastClickedFileIndex.value, idx].sort((x, y) => x - y);
+    for (let i = a; i <= b; i++) selectedFiles.add(fileItems[i].file!.path);
+  } else if (e.ctrlKey || e.metaKey) {
+    selectedFiles.has(path) ? selectedFiles.delete(path) : selectedFiles.add(path);
+    lastClickedFileIndex.value = idx;
+  } else {
+    selectedFiles.clear();
+    selectedFiles.add(path);
+    lastClickedFileIndex.value = idx;
+  }
+}
 
 function displayValue(f: AnalyzedFile) {
   const d = fileDecisions[f.path];

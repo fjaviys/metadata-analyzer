@@ -195,6 +195,15 @@ class UnifiedRunStarted(BaseModel):
     status: str = "running"
 
 
+class PlanPreviewRequest(BaseModel):
+    session_id: int
+    subfolders: list[str] = Field(default_factory=list,
+                                  description="Subcarpetas seleccionadas (vacío = todas)")
+    base_mode: Literal["auto", "root", "manual"] = "auto"
+    base_folder: Optional[str] = Field(None, description="Solo si base_mode='manual'")
+    layout: str = Field("AAAA/MM", description="Layout destino por defecto del run")
+
+
 class ApiError(BaseModel):
     error: str
     detail: Optional[str] = None

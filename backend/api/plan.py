@@ -7,7 +7,9 @@ from fastapi import APIRouter, HTTPException, Query
 
 from core.exceptions import ConfirmationRequiredError, MetadataAnalyzerError
 from database.db import get_db
-from schemas.models import FolderDecisionRequest, UnifiedRunRequest, UnifiedRunStarted
+from schemas.models import (
+    FolderDecisionRequest, PlanPreviewRequest, UnifiedRunRequest, UnifiedRunStarted,
+)
 from services import plan_service
 
 router = APIRouter(prefix="/plan", tags=["plan"])
@@ -24,6 +26,16 @@ async def create_run(req: UnifiedRunRequest):
     except MetadataAnalyzerError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e))
     return UnifiedRunStarted(**res)
+
+
+@router.post("/preview")
+async def preview_run(req: PlanPreviewRequest):
+    """Previsualización de solo lectura (sin confirmación): nunca escribe ni mueve nada."""
+    try:
+        return plan_service.build_preview(
+            req.session_id, req.subfolders, req.base_mode, req.base_folder, req.layout)
+    except MetadataAnalyzerError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e))
 
 
 # --- decisiones por carpeta (rutas literales ANTES de /run/{run_id}) --------

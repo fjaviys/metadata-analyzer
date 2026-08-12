@@ -241,3 +241,30 @@ export interface UnifiedRunResult {
   structure: { stats: Record<string, number>; total: number; count: number; rows: ReorganizeMove[] };
   offset: number;
 }
+
+export interface PlanPreviewRequest {
+  session_id: number;
+  subfolders?: string[];
+  base_mode: BaseMode;
+  base_folder?: string | null;
+  layout: string;
+}
+
+export interface PlanPreviewCorrection {
+  path: string;
+  before: string | null;
+  after: string | null;
+}
+
+export interface PlanPreviewMove {
+  path: string;
+  before_dir?: string;
+  after_dir?: string;
+  reason?: string;
+  skip_reason?: string;
+}
+
+export interface PlanPreviewResult {
+  corrections: PlanPreviewCorrection[];
+  moves: PlanPreviewMove[];
+}

@@ -3,9 +3,9 @@
 import type {
   AnalysisRequest, AnalysisStarted, AnalyzedFile, BrowseResult, ConnectionTestRequest,
   ConnectionTestResult, CorrectionRequest, CorrectionRow, CorrectionStarted, FolderDecision,
-  FolderNode, FormatCatalog, LayoutPreset, MetadataMode, ProgressEvent, ReorganizeMove,
-  ReorganizeRequest, ReorganizeRunSummary, ReorganizeStarted, SessionSummary, StructureMode,
-  UnifiedRunRequest, UnifiedRunResult, UnifiedRunStarted,
+  FolderNode, FormatCatalog, LayoutPreset, MetadataMode, PlanPreviewRequest, PlanPreviewResult,
+  ProgressEvent, ReorganizeMove, ReorganizeRequest, ReorganizeRunSummary, ReorganizeStarted,
+  SessionSummary, StructureMode, UnifiedRunRequest, UnifiedRunResult, UnifiedRunStarted,
 } from '../types/api';
 
 // Config de runtime inyectada por el servidor (window.__MA_CONFIG__ en MainLayout).
@@ -194,6 +194,9 @@ export const api = {
 
   startPlanRun: (body: UnifiedRunRequest) =>
     request<UnifiedRunStarted>('/plan/run', { method: 'POST', body: JSON.stringify(body) }),
+
+  getPlanPreview: (body: PlanPreviewRequest) =>
+    request<PlanPreviewResult>('/plan/preview', { method: 'POST', body: JSON.stringify(body) }),
 
   getPlanRun: (runId: string, opts: { only_changes?: boolean;
                                       limit?: number; offset?: number } = {}) => {

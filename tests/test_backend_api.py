@@ -205,6 +205,72 @@ def test_e2e_unified_plan_two_folders_different_axes():
         time.sleep(0.1)
 
 
+@pytest.mark.skipif(not _REAL, reason="requiere Pillow y exiftool")
+def test_plan_preview_has_no_side_effects_and_matches_real_run():
+    """
+    El endpoint de previsualización debe: (1) no escribir ni mover NADA en
+    disco, (2) devolver exactamente lo que luego produce el run real.
+    """
+    loop = asyncio.new_event_loop()
+    t = threading.Thread(target=loop.run_forever, daemon=True)
+    t.start()
+    try:
+        media = tempfile.mkdtemp(prefix="ma_media_preview_", dir=tempfile.gettempdir())
+        folder_a = os.path.join(media, "folderA")
+        folder_b = os.path.join(media, "folderB")
+        os.makedirs(folder_a)
+        os.makedirs(folder_b)
+        file_a = os.path.join(folder_a, "IMG_20200702.jpg")
+        file_b = os.path.join(folder_b, "IMG_20180101.jpg")
+        _jpeg(file_a, exif_date="2015:01:01 00:00:00")
+        _jpeg(file_b, exif_date="2010:01:01 00:00:00")
+
+        db = get_db()
+        sid = db.create_session(media, "local")
+        an._run_analysis_blocking(sid, media, None, True, None, loop)
+
+        db.set_folder_decision(sid, folder_a, structure_mode="update")
+        db.set_folder_decision(sid, folder_b, metadata_mode="keep",
+                               structure_mode="update", structure_layout="AAAA-MM")
+
+        # snapshot antes de previsualizar
+        before_a = ma.run_exiftool([file_a])[0].get("DateTimeOriginal")
+        before_b = ma.run_exiftool([file_b])[0].get("DateTimeOriginal")
+
+        r = client.post("/api/plan/preview", json={
+            "session_id": sid, "base_mode": "auto", "layout": "AAAA/MM"})
+        assert r.status_code == 200
+        body = r.json()
+
+        # sin efectos secundarios: ni el disco ni los archivos cambiaron
+        assert os.path.isfile(file_a) and os.path.isfile(file_b)
+        assert ma.run_exiftool([file_a])[0].get("DateTimeOriginal") == before_a
+        assert ma.run_exiftool([file_b])[0].get("DateTimeOriginal") == before_b
+        assert db.get_reorganize_moves(session_id=sid) == []
+        assert db.get_corrections(session_id=sid) == []
+
+        corr_by_path = {c["path"]: c for c in body["corrections"]}
+        assert file_a in corr_by_path
+        assert corr_by_path[file_a]["after"] == "2020:07:02 00:00:00"
+        assert file_b not in corr_by_path  # metadata_mode='keep'
+
+        moves_by_path = {m["path"]: m for m in body["moves"]}
+        assert moves_by_path[file_a]["after_dir"] == os.path.join(folder_a, "2020", "07")
+        assert moves_by_path[file_b]["after_dir"] == os.path.join(folder_b, "2018-01")
+
+        # ahora el run real: debe coincidir exactamente con lo que predijo el preview
+        correction_rows, reorganize_plans = pl.build_unified_plan(
+            sid, [], media, "auto", None, "AAAA/MM")
+        pl._run_unified_blocking("previewreal01", sid, correction_rows, reorganize_plans, False, loop)
+
+        moved = {m["original_path"]: m["new_path"] for m in db.get_reorganize_moves(run_id="previewreal01")}
+        assert os.path.dirname(moved[file_a]) == moves_by_path[file_a]["after_dir"]
+        assert os.path.dirname(moved[file_b]) == moves_by_path[file_b]["after_dir"]
+    finally:
+        loop.call_soon_threadsafe(loop.stop)
+        time.sleep(0.1)
+
+
 def _jpeg(path, exif_date=None):
     Image.new("RGB", (2, 2), (30, 90, 160)).save(path, "JPEG")
     if exif_date:

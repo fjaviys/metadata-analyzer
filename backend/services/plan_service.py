@@ -56,6 +56,19 @@ def _folder_decision_for(path: str, decisions: list[dict]) -> dict:
     return _DEFAULT_FOLDER_DECISION
 
 
+def _resolve_base(root: str, base_mode: str, base_folder: Optional[str]) -> Optional[str]:
+    """Valida y devuelve la carpeta base real según `base_mode` (auto/root/manual)."""
+    if base_mode == "manual":
+        if not base_folder:
+            raise MetadataAnalyzerError("falta la carpeta base manual (base_folder)")
+        return validate_subfolders(root, [base_folder])[0]
+    if base_mode == "root":
+        return validate_path(root, must_exist=True)
+    if base_mode != "auto":
+        raise MetadataAnalyzerError(f"base_mode inválido: {base_mode}")
+    return None  # "auto": build_unified_plan calcula compute_base_folder por archivo
+
+
 def build_unified_plan(session_id: int, subfolders: list[str], root: str,
                        base_mode: str, base_folder: Optional[str], default_layout: str,
                        ) -> tuple[list[dict], list[ReorganizePlan]]:
@@ -123,6 +136,37 @@ def build_unified_plan(session_id: int, subfolders: list[str], root: str,
     return correction_rows, reorganize_plans
 
 
+def build_preview(session_id: int, subfolders: list[str], base_mode: str,
+                  base_folder: Optional[str], layout: str) -> dict:
+    """
+    Previsualización de solo lectura: reutiliza `build_unified_plan` (pura, no
+    escribe nada) y la serializa para la UI. Nunca requiere confirmación —
+    no mueve ni escribe ningún archivo.
+    """
+    db = get_db()
+    session = db.get_session(session_id)
+    if not session:
+        raise MetadataAnalyzerError(f"sesión {session_id} no encontrada")
+
+    root = session["root"]
+    real_base = _resolve_base(root, base_mode, base_folder)
+    correction_rows, reorganize_plans = build_unified_plan(
+        session_id, subfolders, root, base_mode, real_base, layout)
+
+    corrections = [
+        {"path": r["path"], "before": r.get("exif_date"), "after": r.get("recommended_date")}
+        for r in correction_rows
+    ]
+    moves = []
+    for p in reorganize_plans:
+        if p.action == "move":
+            moves.append({"path": p.path, "before_dir": os.path.dirname(p.path),
+                          "after_dir": os.path.dirname(p.target), "reason": p.reason})
+        else:
+            moves.append({"path": p.path, "skip_reason": p.reason})
+    return {"corrections": corrections, "moves": moves}
+
+
 async def start_unified_run(session_id: int, subfolders: list[str], dry_run: bool,
                             confirm_real_write: bool, base_mode: str,
                             base_folder: Optional[str], layout: str) -> dict:
@@ -139,15 +183,7 @@ async def start_unified_run(session_id: int, subfolders: list[str], dry_run: boo
         )
 
     root = session["root"]
-    real_base: Optional[str] = None
-    if base_mode == "manual":
-        if not base_folder:
-            raise MetadataAnalyzerError("falta la carpeta base manual (base_folder)")
-        real_base = validate_subfolders(root, [base_folder])[0]
-    elif base_mode == "root":
-        real_base = validate_path(root, must_exist=True)
-    elif base_mode != "auto":
-        raise MetadataAnalyzerError(f"base_mode inválido: {base_mode}")
+    real_base = _resolve_base(root, base_mode, base_folder)
 
     correction_rows, reorganize_plans = build_unified_plan(
         session_id, subfolders, root, base_mode, real_base, layout)
