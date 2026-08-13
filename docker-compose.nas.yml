@@ -12,8 +12,9 @@
 #   2) Las imágenes GHCR son públicas: no hace falta `docker login`.
 #
 # SEGURIDAD: los medios se montan en SOLO LECTURA (read_only: true) por defecto.
-# Para ejecutar correcciones REALES, cambia a MEDIA_READ_ONLY=false (ver más abajo)
-# y recrea el backend. Empieza siempre por el modo dry-run en la interfaz.
+# Para aplicar cambios REALES (corregir metadatos y/o mover archivos a una
+# estructura por fecha, desde /apply), cambia a MEDIA_READ_ONLY=false (ver más
+# abajo) y recrea el backend. Empieza siempre por el modo dry-run en la interfaz.
 
 services:
   backend:
@@ -76,6 +77,6 @@ networks:
 # UI:      http://NAS_HOST:4321
 # API:     http://NAS_HOST:8000/api   ·   Health: http://NAS_HOST:8000/health
 #
-# --- Pasar a correcciones reales ---
+# --- Pasar a cambios reales ---
 # Añade  MEDIA_READ_ONLY=false  a las variables y recrea el backend. Recuerda
 # volver a  true  cuando termines.
