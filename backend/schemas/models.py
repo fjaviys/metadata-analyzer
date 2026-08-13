@@ -116,19 +116,11 @@ class CorrectionStarted(BaseModel):
     status: str = "running"
 
 
-class OverrideRequest(BaseModel):
-    session_id: int
-    folder: str = Field(..., description="Carpeta (dentro de la raíz) a la que aplicar el patrón")
-    pattern: str = Field(..., description="Patrón de tokens (AAAA-MM-DD…) o clave de preset")
-    source: str = Field("auto", description="Dónde leer la fecha: auto|filename|folder|path")
-
-
 class FileOverrideRequest(BaseModel):
     session_id: int
     path: str
-    kind: Literal["date_value", "date_pattern", "skip"]
-    value: Optional[str] = Field(None, description="Fecha EXIF 'AAAA:MM:DD HH:MM:SS' o patrón")
-    precision: Optional[str] = None
+    kind: Literal["keep", "filename", "folder"] = Field(
+        ..., description="keep: no tocar · filename: usar filename_date · folder: usar path_date")
 
 
 # --------------------------- reorganización (Fase 2) ------------------------
@@ -159,12 +151,19 @@ class ReorganizeStarted(BaseModel):
     status: str = "running"
 
 
-# --------------------------- árbol de asignación unificado (Fase 3) ---------
+class ReorganizePreviewRequest(BaseModel):
+    session_id: int
+    subfolders: list[str] = Field(default_factory=list,
+                                  description="Subcarpetas seleccionadas (vacío = todas)")
+    base_mode: Literal["auto", "root", "manual"] = "auto"
+    base_folder: Optional[str] = Field(None, description="Solo si base_mode='manual'")
+    layout: str = Field("AAAA/MM", description="Layout destino por defecto del run")
+    date_source: Literal["session", "exif_live"] = "session"
+
 
 class FolderDecisionRequest(BaseModel):
     session_id: int
     folder: str
-    metadata_mode: Optional[Literal["update", "keep"]] = None
     structure_mode: Optional[Literal["update", "keep"]] = None
     structure_layout: Optional[str] = Field(
         None, description="Patrón AAAA/MM… custom para esta carpeta; "
@@ -172,36 +171,6 @@ class FolderDecisionRequest(BaseModel):
     clear_structure_layout: bool = Field(
         False, description="True para volver a usar el layout global del run "
                            "(borra el patrón custom de esta carpeta)")
-
-
-class UnifiedRunRequest(BaseModel):
-    session_id: int
-    subfolders: list[str] = Field(default_factory=list,
-                                  description="Subcarpetas seleccionadas (vacío = todas)")
-    dry_run: bool = True
-    confirm_real_write: bool = Field(
-        False, description="Debe ser True para aplicar cambios REALES")
-    base_mode: Literal["auto", "root", "manual"] = "auto"
-    base_folder: Optional[str] = Field(None, description="Solo si base_mode='manual'")
-    layout: str = Field("AAAA/MM", description="Layout destino por defecto del run")
-
-
-class UnifiedRunStarted(BaseModel):
-    run_id: str
-    dry_run: bool
-    total_candidates: int
-    metadata_candidates: int
-    structure_candidates: int
-    status: str = "running"
-
-
-class PlanPreviewRequest(BaseModel):
-    session_id: int
-    subfolders: list[str] = Field(default_factory=list,
-                                  description="Subcarpetas seleccionadas (vacío = todas)")
-    base_mode: Literal["auto", "root", "manual"] = "auto"
-    base_folder: Optional[str] = Field(None, description="Solo si base_mode='manual'")
-    layout: str = Field("AAAA/MM", description="Layout destino por defecto del run")
 
 
 class ApiError(BaseModel):

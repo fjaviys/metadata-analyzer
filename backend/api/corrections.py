@@ -1,20 +1,14 @@
-"""api/corrections.py — Correcciones (dry-run / real), estado y overrides de patrón."""
+"""api/corrections.py — Paso 1 (Metadatos): dry-run/real y decisión por archivo."""
 
 from __future__ import annotations
 
 import bootstrap  # noqa: F401
-import metadata_analyzer as ma
-import pattern_parser as pp
 from fastapi import APIRouter, HTTPException, Query
 
 from core.exceptions import ConfirmationRequiredError, MetadataAnalyzerError
-from core.security import validate_subfolders
 from database.db import get_db
-from schemas.models import (
-    CorrectionRequest, CorrectionStarted, FileOverrideRequest, OverrideRequest,
-)
+from schemas.models import CorrectionRequest, CorrectionStarted, FileOverrideRequest
 from services import correction_service
-from services.correction_service import _under_folder, override_correction
 
 router = APIRouter(prefix="/corrections", tags=["corrections"])
 
@@ -31,113 +25,7 @@ async def create_correction(req: CorrectionRequest):
     return CorrectionStarted(**res)
 
 
-# --- Patrones de override (deben ir ANTES de /{run_id}) ---------------------
-
-@router.get("/pattern-presets")
-async def pattern_presets():
-    return {"presets": pp.PRESETS}
-
-
-@router.post("/overrides")
-async def create_override(req: OverrideRequest):
-    db = get_db()
-    session = db.get_session(req.session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="sesión no encontrada")
-
-    # resolver preset o patrón crudo
-    preset = pp.preset_by_key(req.pattern)
-    pattern = preset["pattern"] if preset else req.pattern
-    source = preset["source"] if preset else req.source
-    if pattern != pp.DAYMONTH_FOLDERYEAR:
-        try:
-            pp.compile_pattern(pattern)
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=f"patrón inválido: {e}")
-
-    # validar carpeta dentro de la raíz de la sesión
-    try:
-        real_folder = validate_subfolders(session["root"], [req.folder])[0]
-    except MetadataAnalyzerError as e:
-        raise HTTPException(status_code=e.status_code, detail=str(e))
-
-    override_id = db.add_override(req.session_id, real_folder, pattern, source)
-
-    # previsualización: TODOS los archivos bajo la carpeta (incluye "rescatados"),
-    # aplicando la misma lógica que en la corrección (idempotencia incluida).
-    ov = {"folder": real_folder, "pattern": pattern, "source": source}
-    files = db.get_files(req.session_id, limit=1_000_000)
-    affected, rescued, preview = 0, 0, []
-    for f in files:
-        if not _under_folder(f["path"], real_folder):
-            continue
-        was_marked = bool(f.get("needs_correction"))
-        old = f.get("exif_date") or f.get("recommended_date")
-        if override_correction(f, ov):
-            affected += 1
-            if not was_marked:
-                rescued += 1
-            if len(preview) < 20:
-                preview.append({
-                    "path": f["path"], "old": old,
-                    "new": f["recommended_date"],
-                    "precision": f["recommended_precision"],
-                    "rescued": not was_marked,
-                })
-    return {"id": override_id, "folder": real_folder, "pattern": pattern,
-            "source": source, "affected": affected, "rescued": rescued,
-            "preview": preview}
-
-
-@router.get("/overrides")
-async def list_overrides(session_id: int):
-    return {"overrides": get_db().get_overrides(session_id)}
-
-
-@router.delete("/overrides/{override_id}")
-async def delete_override(override_id: int):
-    get_db().delete_override(override_id)
-    return {"deleted": override_id}
-
-
-# --- Decisiones por archivo -------------------------------------------------
-
-@router.get("/date-options")
-async def date_options(session_id: int, path: str):
-    """Opciones de fecha recomendadas para UN archivo, con su valor (ejemplo)."""
-    db = get_db()
-    row = db.get_file(session_id, path)
-    if not row:
-        raise HTTPException(status_code=404, detail="archivo no encontrado en la sesión")
-
-    options: list[dict] = []
-    seen: set[str] = set()
-
-    def add(source: str, label: str, value, precision):
-        if not value or value in seen:
-            return
-        seen.add(value)
-        options.append({"source": source, "label": label, "value": value,
-                        "precision": precision})
-
-    add("recommended", "Recomendada (automática)",
-        row.get("recommended_date"), row.get("recommended_precision"))
-    add("exif", "EXIF del archivo", row.get("exif_date"),
-        "DATETIME" if row.get("exif_date") else None)
-    add("filename", "Fecha del nombre", row.get("filename_date"), None)
-    add("path", "Fecha de la carpeta", row.get("path_date"), None)
-    for preset in pp.PRESETS:
-        det = pp.resolve(path, preset["pattern"], preset.get("source", "auto"))
-        if det and det.is_valid:
-            add("preset:" + preset["key"], preset["label"],
-                det.to_exif_string(), det.precision.label)
-
-    return {"path": path, "media_type": row.get("media_type"),
-            "exif": row.get("exif_date"),
-            "recommended": row.get("recommended_date"),
-            "needs_correction": bool(row.get("needs_correction")),
-            "options": options}
-
+# --- Decisión por archivo (rutas literales ANTES de /{run_id}) --------------
 
 @router.post("/file-overrides")
 async def create_file_override(req: FileOverrideRequest):
@@ -146,27 +34,16 @@ async def create_file_override(req: FileOverrideRequest):
     if not row:
         raise HTTPException(status_code=404, detail="archivo no encontrado en la sesión")
 
-    new_value = None
-    precision = req.precision
-    if req.kind == "date_value":
-        if not req.value or ma.parse_exif_datetime(req.value) is None:
-            raise HTTPException(status_code=400,
-                                detail="valor de fecha inválido (usa 'AAAA:MM:DD HH:MM:SS')")
-        new_value = req.value
-        precision = precision or "FULL_DATE"
-    elif req.kind == "date_pattern":
-        if not req.value:
-            raise HTTPException(status_code=400, detail="falta el patrón")
-        det = pp.resolve(req.path, req.value, "auto")
-        if not (det and det.is_valid):
-            raise HTTPException(status_code=400,
-                                detail="el patrón no produce una fecha válida para este archivo")
-        new_value = det.to_exif_string()
-        precision = det.precision.label
+    if req.kind in ("filename", "folder"):
+        column = "filename_date" if req.kind == "filename" else "path_date"
+        if not row.get(column):
+            raise HTTPException(
+                status_code=400,
+                detail=f"no hay fecha detectada en {'el nombre' if req.kind == 'filename' else 'la carpeta'} "
+                       "para este archivo")
 
-    oid = db.set_file_override(req.session_id, req.path, req.kind, req.value, precision)
-    return {"id": oid, "path": req.path, "kind": req.kind,
-            "new": new_value, "precision": precision}
+    oid = db.set_file_override(req.session_id, req.path, req.kind)
+    return {"id": oid, "path": req.path, "kind": req.kind}
 
 
 @router.get("/file-overrides")

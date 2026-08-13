@@ -1,10 +1,10 @@
 """
-Tests de los nuevos endpoints/lógica: browse, formats, count en test,
-filtro de extensiones y recursividad de la corrección.
+Tests de los endpoints/lógica de configuración y del Paso 1 (Metadatos):
+browse, formats, count en test, filtro de extensiones, recursividad, y el
+modelo simplificado de decisión por archivo (keep/filename/folder).
 """
 
 import os
-import subprocess
 import sys
 import tempfile
 
@@ -33,178 +33,151 @@ _REAL = _HAS_PIL and ma.exiftool_available()
 pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
 import app as backend_app  # noqa: E402
-from services.correction_service import _under_folder, _candidates  # noqa: E402
+from services.correction_service import _under_folder  # noqa: E402
 import services.correction_service as correction_service  # noqa: E402
 from database.db import get_db  # noqa: E402
 
-
-def test_pattern_presets_endpoint():
-    r = client.get("/api/corrections/pattern-presets")
-    assert r.status_code == 200
-    keys = {p["key"] for p in r.json()["presets"]}
-    assert {"iso", "dmy", "daymonth_folderyear"} <= keys
+client = TestClient(backend_app.app)
 
 
-def test_override_recomputes_and_applies(tmp_path):
-    db = get_db()
-    root = str(tmp_path)
-    os.makedirs(os.path.join(root, "2009", "02102009"))
-    sid = db.create_session(root, "local")
-    fpath = os.path.join(root, "2009", "02102009", "IMG_0006.JPG")
-    open(fpath, "wb").close()
-    # análisis previo propuso solo el año (simulado)
-    db.insert_file(sid, {
-        "path": fpath, "media_type": "photo", "needs_correction": True,
-        "recommended_date": "2009:01:01 00:00:00", "recommended_precision": "YEAR",
-        "recommended_source": "path", "inconsistencies": [],
-    }, "2009", "2009/02102009")
-
-    # crear override con patrón DDMMAAAA sobre la carpeta 2009
-    r = client.post("/api/corrections/overrides", json={
-        "session_id": sid, "folder": os.path.join(root, "2009"),
-        "pattern": "DDMMAAAA", "source": "auto"})
-    assert r.status_code == 200
-    body = r.json()
-    assert body["affected"] == 1
-    assert body["preview"][0]["new"] == "2009:10:02 00:00:00"
-
-    # al aplicar overrides a los candidatos, la fecha recomendada cambia
-    cands = correction_service.apply_overrides(
-        sid, db.get_files(sid, needs_correction=True, limit=100))
-    assert cands[0]["recommended_date"] == "2009:10:02 00:00:00"
-    assert cands[0]["recommended_source"] == "override"
-
-    # listar y borrar
-    assert len(client.get("/api/corrections/overrides", params={"session_id": sid}).json()["overrides"]) == 1
-    client.delete(f"/api/corrections/overrides/{body['id']}")
-    assert client.get("/api/corrections/overrides", params={"session_id": sid}).json()["overrides"] == []
-
-
-def test_override_rescues_unmarked_files(tmp_path):
-    db = get_db()
-    root = str(tmp_path)
-    os.makedirs(os.path.join(root, "2009", "02102009"))
-    sid = db.create_session(root, "local")
-    # archivo que el análisis NO marcó (needs_correction=False), con EXIF "correcto"
-    unmarked = os.path.join(root, "2009", "02102009", "IMG_9.JPG")
-    open(unmarked, "wb").close()
-    db.insert_file(sid, {
-        "path": unmarked, "media_type": "photo", "needs_correction": False,
-        "exif_date": "2015:05:05 12:00:00", "exif_date_tag": "DateTimeOriginal",
-        "has_exif_date": True, "recommended_date": None, "inconsistencies": [],
-    }, "2009", "2009/02102009")
-
-    # sin override, no es candidato
-    assert correction_service.build_candidates(sid, [], root) == []
-
-    # con override DDMMAAAA sobre 2009 -> rescata el archivo no marcado
-    r = client.post("/api/corrections/overrides", json={
-        "session_id": sid, "folder": os.path.join(root, "2009"),
-        "pattern": "DDMMAAAA", "source": "auto"})
-    assert r.status_code == 200
-    body = r.json()
-    assert body["affected"] == 1 and body["rescued"] == 1
-
-    cands = correction_service.build_candidates(sid, [], root)
-    assert len(cands) == 1
-    assert cands[0]["recommended_date"] == "2009:10:02 00:00:00"
-    assert cands[0]["recommended_source"] == "override"
-
-
-def test_override_idempotent_when_exif_matches(tmp_path):
-    db = get_db()
-    root = str(tmp_path)
-    os.makedirs(os.path.join(root, "2009", "02102009"))
-    sid = db.create_session(root, "local")
-    good = os.path.join(root, "2009", "02102009", "IMG_ok.JPG")
-    open(good, "wb").close()
-    db.insert_file(sid, {
-        "path": good, "media_type": "photo", "needs_correction": False,
-        "exif_date": "2009:10:02 00:00:00", "exif_date_tag": "DateTimeOriginal",
-        "has_exif_date": True, "recommended_date": None, "inconsistencies": [],
-    }, "2009", "2009/02102009")
-    db.add_override(sid, os.path.join(root, "2009"), "DDMMAAAA", "auto")
-    # EXIF ya coincide con el patrón -> no se corrige (idempotente)
-    assert correction_service.build_candidates(sid, [], root) == []
-
-
-def _seed_file(db, root, sub, name, **kw):
+def _seed_file(db, sid, root, sub, name, **kw):
     os.makedirs(os.path.join(root, sub), exist_ok=True)
     p = os.path.join(root, sub, name)
     open(p, "wb").close()
-    row = {"path": p, "media_type": "photo", "needs_correction": kw.get("needs", True),
+    row = {"path": p, "media_type": "photo", "needs_correction": kw.get("needs", False),
            "exif_date": kw.get("exif"), "exif_date_tag": "DateTimeOriginal",
            "has_exif_date": kw.get("exif") is not None,
            "filename_date": kw.get("fname"), "path_date": kw.get("pdate"),
            "recommended_date": kw.get("rec"), "recommended_precision": kw.get("prec"),
            "recommended_source": "path", "inconsistencies": []}
-    db.insert_file(db_sid_cache[0], row, sub.split("/")[0], sub)
+    db.insert_file(sid, row, sub.split("/")[0], sub)
     return p
 
 
-db_sid_cache = [0]
+# ---------------- Paso 1 (Metadatos): decisión por archivo ------------------
 
-
-def test_date_options_lists_candidates(tmp_path):
+def test_metadata_candidates_default_keep(tmp_path):
     db = get_db()
     root = str(tmp_path)
-    sid = db.create_session(root, "local"); db_sid_cache[0] = sid
-    p = _seed_file(db, root, "2009/02102009", "IMG_20081014.jpg",
-                   exif="2008:10:14 12:00:00", rec="2009:01:01 00:00:00", prec="YEAR")
-    r = client.get("/api/corrections/date-options", params={"session_id": sid, "path": p})
+    sid = db.create_session(root, "local")
+    _seed_file(db, sid, root, "misc", "IMG_20081014.jpg", exif="2000:01:01 00:00:00",
+              fname="2008:10:14 00:00:00")
+    # sin decisión explícita -> no se toca nada (default seguro)
+    assert correction_service.build_metadata_candidates(sid, [], root) == []
+
+
+def test_metadata_candidates_filename_source(tmp_path):
+    db = get_db()
+    root = str(tmp_path)
+    sid = db.create_session(root, "local")
+    p = _seed_file(db, sid, root, "misc", "IMG_20081014.jpg", exif="2000:01:01 00:00:00",
+                   fname="2008:10:14 00:00:00")
+    r = client.post("/api/corrections/file-overrides",
+                    json={"session_id": sid, "path": p, "kind": "filename"})
     assert r.status_code == 200
-    opts = r.json()["options"]
-    values = {o["value"] for o in opts}
-    # EXIF, recomendada (año) y el patrón de carpeta DDMMAAAA (2009-10-02) y del nombre ISO
-    assert "2008:10:14 12:00:00" in values
-    assert "2009:10:02 00:00:00" in values  # de 02102009 (DDMMAAAA)
-    assert "2008:10:14 00:00:00" in values  # del nombre IMG_20081014
-
-
-def test_file_override_value_and_skip(tmp_path):
-    db = get_db()
-    root = str(tmp_path)
-    sid = db.create_session(root, "local"); db_sid_cache[0] = sid
-    p = _seed_file(db, root, "2009", "IMG_x.jpg", exif="2008:10:14 12:00:00",
-                   rec="2009:01:01 00:00:00", prec="YEAR")
-
-    # fijar una fecha concreta para ese archivo
-    r = client.post("/api/corrections/file-overrides", json={
-        "session_id": sid, "path": p, "kind": "date_value",
-        "value": "2009:10:02 00:00:00", "precision": "FULL_DATE"})
-    assert r.status_code == 200 and r.json()["new"] == "2009:10:02 00:00:00"
-    cands = correction_service.build_candidates(sid, [], root)
-    assert cands[0]["recommended_date"] == "2009:10:02 00:00:00"
-    assert cands[0]["recommended_source"] == "file-override"
-
-    # cambiar a "no cambiar" (skip) -> excluido de candidatos
-    client.post("/api/corrections/file-overrides", json={
-        "session_id": sid, "path": p, "kind": "skip"})
-    assert correction_service.build_candidates(sid, [], root) == []
-
-    # borrar el override -> vuelve al comportamiento del análisis (needs_correction)
-    client.delete("/api/corrections/file-overrides", params={"session_id": sid, "path": p})
-    assert client.get("/api/corrections/file-overrides", params={"session_id": sid}).json()["file_overrides"] == []
-    assert len(correction_service.build_candidates(sid, [], root)) == 1
-
-
-def test_file_override_pattern_resolves(tmp_path):
-    db = get_db()
-    root = str(tmp_path)
-    sid = db.create_session(root, "local"); db_sid_cache[0] = sid
-    p = _seed_file(db, root, "misc", "IMG_20081014.jpg", exif="2000:01:01 00:00:00",
-                   needs=True, rec="2000:01:01 00:00:00", prec="DATETIME")
-    # patrón AAAAMMDD sobre el nombre -> 2008:10:14
-    r = client.post("/api/corrections/file-overrides", json={
-        "session_id": sid, "path": p, "kind": "date_pattern", "value": "AAAAMMDD"})
-    assert r.status_code == 200 and r.json()["new"] == "2008:10:14 00:00:00"
-    cands = correction_service.build_candidates(sid, [], root)
+    cands = correction_service.build_metadata_candidates(sid, [], root)
+    assert len(cands) == 1
     assert cands[0]["recommended_date"] == "2008:10:14 00:00:00"
+    assert cands[0]["recommended_source"] == "filename"
 
-    # patrón que NO resuelve para este archivo -> 400
-    bad = client.post("/api/corrections/file-overrides", json={
-        "session_id": sid, "path": p, "kind": "date_pattern", "value": "hhmmss"})
-    assert bad.status_code == 400
+
+def test_metadata_candidates_folder_source(tmp_path):
+    db = get_db()
+    root = str(tmp_path)
+    sid = db.create_session(root, "local")
+    p = _seed_file(db, sid, root, "2009/02102009", "IMG_x.jpg", exif="2000:01:01 00:00:00",
+                   pdate="2009:10:02 00:00:00")
+    r = client.post("/api/corrections/file-overrides",
+                    json={"session_id": sid, "path": p, "kind": "folder"})
+    assert r.status_code == 200
+    cands = correction_service.build_metadata_candidates(sid, [], root)
+    assert len(cands) == 1
+    assert cands[0]["recommended_date"] == "2009:10:02 00:00:00"
+    assert cands[0]["recommended_source"] == "folder"
+
+
+def test_metadata_candidates_keep_excludes(tmp_path):
+    db = get_db()
+    root = str(tmp_path)
+    sid = db.create_session(root, "local")
+    p = _seed_file(db, sid, root, "misc", "IMG_20081014.jpg", exif="2000:01:01 00:00:00",
+                   fname="2008:10:14 00:00:00")
+    db.set_file_override(sid, p, "keep")
+    assert correction_service.build_metadata_candidates(sid, [], root) == []
+
+
+def test_metadata_candidates_never_fabricates(tmp_path):
+    """Aunque se fuerce el override en BD (saltándose la validación del endpoint),
+    el servicio nunca inventa una fecha si esa fuente no tiene ninguna."""
+    db = get_db()
+    root = str(tmp_path)
+    sid = db.create_session(root, "local")
+    p = _seed_file(db, sid, root, "misc", "photo.jpg", exif="2000:01:01 00:00:00")
+    db.set_file_override(sid, p, "filename")
+    assert correction_service.build_metadata_candidates(sid, [], root) == []
+
+
+def test_metadata_candidates_idempotent_when_exif_matches(tmp_path):
+    db = get_db()
+    root = str(tmp_path)
+    sid = db.create_session(root, "local")
+    p = _seed_file(db, sid, root, "misc", "IMG_20081014.jpg", exif="2008:10:14 00:00:00",
+                   fname="2008:10:14 00:00:00")
+    db.set_file_override(sid, p, "filename")
+    assert correction_service.build_metadata_candidates(sid, [], root) == []
+
+
+def test_metadata_candidates_recursion(tmp_path):
+    db = get_db()
+    root = str(tmp_path)
+    sid = db.create_session(root, "local")
+    p1 = _seed_file(db, sid, root, "2020/07", "IMG_20200702.jpg", fname="2020:07:02 00:00:00")
+    p2 = _seed_file(db, sid, root, "2020/08/deep", "IMG_20200803.jpg", fname="2020:08:03 00:00:00")
+    p3 = _seed_file(db, sid, root, "2019", "IMG_20190101.jpg", fname="2019:01:01 00:00:00")
+    for p in (p1, p2, p3):
+        db.set_file_override(sid, p, "filename")
+    got = correction_service.build_metadata_candidates(sid, [f"{root}/2020"], root)
+    assert {r["path"] for r in got} == {p1, p2}
+
+
+def test_file_override_keep_filename_folder_roundtrip(tmp_path):
+    db = get_db()
+    root = str(tmp_path)
+    sid = db.create_session(root, "local")
+    p = _seed_file(db, sid, root, "2009/02102009", "IMG_20081014.jpg",
+                   exif="2000:01:01 00:00:00", fname="2008:10:14 00:00:00",
+                   pdate="2009:10:02 00:00:00")
+
+    r = client.post("/api/corrections/file-overrides",
+                    json={"session_id": sid, "path": p, "kind": "filename"})
+    assert r.status_code == 200
+    assert correction_service.build_metadata_candidates(sid, [], root)[0]["recommended_date"] \
+        == "2008:10:14 00:00:00"
+
+    r = client.post("/api/corrections/file-overrides",
+                    json={"session_id": sid, "path": p, "kind": "folder"})
+    assert r.status_code == 200
+    assert correction_service.build_metadata_candidates(sid, [], root)[0]["recommended_date"] \
+        == "2009:10:02 00:00:00"
+
+    client.post("/api/corrections/file-overrides",
+               json={"session_id": sid, "path": p, "kind": "keep"})
+    assert correction_service.build_metadata_candidates(sid, [], root) == []
+
+    client.delete("/api/corrections/file-overrides", params={"session_id": sid, "path": p})
+    assert client.get("/api/corrections/file-overrides",
+                      params={"session_id": sid}).json()["file_overrides"] == []
+    assert correction_service.build_metadata_candidates(sid, [], root) == []  # sin decisión = keep
+
+
+def test_file_override_rejects_source_without_date(tmp_path):
+    db = get_db()
+    root = str(tmp_path)
+    sid = db.create_session(root, "local")
+    p = _seed_file(db, sid, root, "misc", "photo.jpg", exif="2000:01:01 00:00:00")
+    r = client.post("/api/corrections/file-overrides",
+                    json={"session_id": sid, "path": p, "kind": "filename"})
+    assert r.status_code == 400
 
 
 def test_corrections_run_pagination_and_filter():
@@ -234,8 +207,6 @@ def test_corrections_run_pagination_and_filter():
     # paginación
     r3 = client.get("/api/corrections/runX", params={"only_changes": True, "limit": 2, "offset": 0})
     assert r3.json()["count"] == 2
-
-client = TestClient(backend_app.app)
 
 
 # ---------------- formats ----------------
@@ -279,29 +250,13 @@ def test_browse_rejects_system_path():
     assert r.status_code == 403
 
 
-# ---------------- recursividad corrección ----------------
+# ---------------- recursividad ----------------
 
 def test_under_folder_recursive_and_boundary():
     assert _under_folder("/media/2020/07/02/x.jpg", "/media/2020") is True
     assert _under_folder("/media/2020/x.jpg", "/media/2020") is True
     # límite: no debe colar carpetas hermanas con prefijo común
     assert _under_folder("/media/2020b/x.jpg", "/media/2020") is False
-
-
-def test_candidates_recursion(tmp_path):
-    db = get_db()
-    root = str(tmp_path)
-    sid = db.create_session(root, "local")
-    rows = [
-        ({"path": f"{root}/2020/07/a.jpg", "needs_correction": True}, "2020", "2020/07", None),
-        ({"path": f"{root}/2020/08/deep/b.jpg", "needs_correction": True}, "2020", "2020/08", None),
-        ({"path": f"{root}/2019/c.jpg", "needs_correction": True}, "2019", "2019", None),
-    ]
-    db.insert_files_bulk(sid, rows)
-    # seleccionar "2020" debe incluir 07 y 08/deep (todos los niveles), no 2019
-    got = _candidates(sid, [f"{root}/2020"], root)
-    paths = {r["path"] for r in got}
-    assert paths == {f"{root}/2020/07/a.jpg", f"{root}/2020/08/deep/b.jpg"}
 
 
 # ---------------- count en test ----------------

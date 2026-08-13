@@ -32,3 +32,10 @@ class ConfirmationRequiredError(MetadataAnalyzerError):
 
 class ConnectionTestError(MetadataAnalyzerError):
     status_code = 502
+
+
+class NeedsReanalysisError(MetadataAnalyzerError):
+    """Hay correcciones reales aplicadas a esta sesión; hay que volver a
+    analizar antes de reestructurar carpetas (los datos de la sesión pueden
+    estar desactualizados)."""
+    status_code = 409  # Conflict

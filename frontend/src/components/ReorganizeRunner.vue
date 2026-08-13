@@ -13,12 +13,16 @@
     </div>
 
     <AlertBox v-if="!sessionId" variant="info"
-      message="Elige una sesión ya analizada. Cada carpeta empieza con 'metadatos: actualizar' + 'estructura: mantener' (el comportamiento seguro por defecto)." />
+      message="Elige una sesión ya analizada. La carpeta raíz analizada nunca se mueve." />
 
-    <template v-else>
-      <PatternOverrideEditor :session-id="sessionId" :root="sessionRoot"
-                             @changed="changed = true; load()" />
+    <AlertBox v-else-if="gateBlocked" variant="warning" title="Hace falta re-analizar">
+      {{ gateReason }}
+      <a class="font-medium underline" :href="`/analysis?root=${encodeURIComponent(sessionRoot)}`">
+        Vuelve a analizar esta carpeta
+      </a> y elige la sesión nueva para continuar.
+    </AlertBox>
 
+    <template v-else-if="sessionId">
       <div class="card space-y-4">
         <p class="font-semibold text-slate-700">Carpeta base para mover (cuando aplique)</p>
         <div class="flex flex-wrap gap-4 text-sm text-slate-700">
@@ -45,12 +49,24 @@
           </button>
         </div>
         <input v-model="layout" class="input font-mono" placeholder="AAAA/MM" />
+
+        <p class="font-semibold text-slate-700">Fecha a usar</p>
+        <div class="flex flex-wrap gap-4 text-sm text-slate-700">
+          <label class="flex items-center gap-2">
+            <input type="radio" value="session" v-model="dateSource" />
+            Fecha de la sesión (recomendada / ya corregida)
+          </label>
+          <label class="flex items-center gap-2">
+            <input type="radio" value="exif_live" v-model="dateSource" />
+            Releer el EXIF actual del archivo
+          </label>
+        </div>
       </div>
 
       <LoadingSpinner v-if="loadingFiles" label="Cargando archivos…" />
       <div v-else class="card">
-        <AssignmentTree :session-id="sessionId" :root="sessionRoot" :files="files"
-                        :preview="preview" @changed="changed = true; refreshPreview()" />
+        <StructureTree :session-id="sessionId" :root="sessionRoot" :files="files"
+                       :preview="preview" @changed="changed = true; refreshPreview()" />
       </div>
 
       <AlertBox v-if="changed" variant="info"
@@ -62,25 +78,25 @@
             <input type="radio" :value="true" v-model="dryRun" /> Simulación (dry-run)
           </label>
           <label class="flex items-center gap-2 text-sm font-medium text-slate-700">
-            <input type="radio" :value="false" v-model="dryRun" /> Aplicar cambios reales
+            <input type="radio" :value="false" v-model="dryRun" /> Reorganización real
           </label>
         </div>
 
         <AlertBox v-if="dryRun" variant="info"
-          message="Modo simulación: NO se escribe ni se mueve nada. Verás qué cambios se propondrían en ambos ejes." />
+          message="Modo simulación: NO se mueve nada. Verás qué movimientos se propondrían." />
         <template v-else>
           <AlertBox variant="warning"
-            message="Modo REAL: se corregirán metadatos y/o se moverán archivos según las decisiones del árbol. Backup + verificación en metadatos; movimientos registrados para poder deshacerlos." />
+            message="Modo REAL: se moverán tus archivos a la nueva estructura de carpetas. Cada movimiento queda registrado para poder deshacerlo. Si demasiados archivos fallan, se aborta y se deshace." />
           <label class="flex items-start gap-2 text-sm text-slate-700">
             <input type="checkbox" v-model="confirmReal" class="mt-0.5 rounded border-slate-300" />
-            <span>Confirmo que quiero aplicar estos cambios a los archivos seleccionados.</span>
+            <span>Confirmo que quiero mover los archivos seleccionados a la nueva estructura de carpetas.</span>
           </label>
         </template>
 
         <button class="btn-primary" :class="{ 'btn-danger': !dryRun }"
-                :disabled="running || (!dryRun && !confirmReal)" @click="run">
+                :disabled="running || (!dryRun && !confirmReal) || !layout" @click="run">
           <LoadingSpinner v-if="running" label="Iniciando…" />
-          <span v-else>{{ dryRun ? 'Simular' : 'Aplicar cambios reales' }}</span>
+          <span v-else>{{ dryRun ? 'Simular reorganización' : 'Ejecutar reorganización real' }}</span>
         </button>
 
         <AlertBox v-if="error" variant="error" :message="error" />
@@ -88,8 +104,7 @@
 
       <AnalysisProgress v-if="runId" kind="run" :id="runId" :key="runId" @done="onRunDone" />
 
-      <PlanResults v-if="finishedRunId" :run-id="finishedRunId" :key="'res-' + finishedRunId"
-                  @changed="changed = true" />
+      <ReorganizeResults v-if="finishedRunId" :run-id="finishedRunId" :key="'res-' + finishedRunId" />
     </template>
   </div>
 </template>
@@ -98,26 +113,29 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { api, ApiError } from '../api/client';
 import type {
-  AnalyzedFile, BaseMode, LayoutPreset, PlanPreviewResult, ProgressEvent, SessionSummary,
+  AnalyzedFile, BaseMode, DateSource, LayoutPreset, ProgressEvent, ReorganizePreviewResult,
+  SessionSummary,
 } from '../types/api';
 import AlertBox from './AlertBox.vue';
 import AnalysisProgress from './AnalysisProgress.vue';
-import AssignmentTree from './AssignmentTree.vue';
 import FolderBrowser from './FolderBrowser.vue';
 import LoadingSpinner from './LoadingSpinner.vue';
-import PatternOverrideEditor from './PatternOverrideEditor.vue';
-import PlanResults from './PlanResults.vue';
+import ReorganizeResults from './ReorganizeResults.vue';
+import StructureTree from './StructureTree.vue';
 
 const sessions = ref<SessionSummary[]>([]);
 const sessionId = ref(0);
 const files = ref<AnalyzedFile[]>([]);
 const loadingFiles = ref(false);
-const preview = ref<PlanPreviewResult | null>(null);
+const preview = ref<ReorganizePreviewResult | null>(null);
+const gateBlocked = ref(false);
+const gateReason = ref('');
 
 const baseMode = ref<BaseMode>('auto');
 const baseFolder = ref('');
 const presets = ref<LayoutPreset[]>([]);
 const layout = ref('AAAA/MM');
+const dateSource = ref<DateSource>('session');
 
 const dryRun = ref(true);
 const confirmReal = ref(false);
@@ -148,6 +166,14 @@ onMounted(async () => {
 
 async function load() {
   if (!sessionId.value) return;
+  gateBlocked.value = false;
+  try {
+    const gate = await api.getReorganizeGate(sessionId.value);
+    gateBlocked.value = gate.blocked;
+    gateReason.value = gate.reason || '';
+  } catch { /* ignore */ }
+  if (gateBlocked.value) { files.value = []; return; }
+
   loadingFiles.value = true;
   try {
     files.value = (await api.getFiles(sessionId.value, { limit: 5000 })).files;
@@ -160,19 +186,20 @@ let previewTimer: ReturnType<typeof setTimeout> | null = null;
 function refreshPreview() {
   if (previewTimer) clearTimeout(previewTimer);
   previewTimer = setTimeout(async () => {
-    if (!sessionId.value) { preview.value = null; return; }
+    if (!sessionId.value || gateBlocked.value) { preview.value = null; return; }
     try {
-      preview.value = await api.getPlanPreview({
+      preview.value = await api.getReorganizePreview({
         session_id: sessionId.value,
         base_mode: baseMode.value,
         base_folder: baseMode.value === 'manual' ? baseFolder.value : undefined,
         layout: layout.value,
+        date_source: dateSource.value,
       });
     } catch { preview.value = null; }
   }, 400);
 }
 
-watch([baseMode, baseFolder, layout], refreshPreview);
+watch([baseMode, baseFolder, layout, dateSource], refreshPreview);
 
 async function run() {
   running.value = true;
@@ -181,13 +208,14 @@ async function run() {
   finishedRunId.value = '';
   changed.value = false;
   try {
-    const res = await api.startPlanRun({
+    const res = await api.startReorganize({
       session_id: sessionId.value,
       dry_run: dryRun.value,
       confirm_real_write: !dryRun.value && confirmReal.value,
       base_mode: baseMode.value,
       base_folder: baseMode.value === 'manual' ? baseFolder.value : undefined,
       layout: layout.value,
+      date_source: dateSource.value,
     });
     runId.value = res.run_id;
   } catch (e) {

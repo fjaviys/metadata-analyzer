@@ -1,4 +1,4 @@
-"""api/reorganize.py — Fase 2: reorganización de carpetas por fecha (mover archivos)."""
+"""api/reorganize.py — Paso 2 (Estructura): reestructurar carpetas por fecha."""
 
 from __future__ import annotations
 
@@ -6,9 +6,11 @@ import bootstrap  # noqa: F401
 from reorganize_engine import LAYOUT_PRESETS
 from fastapi import APIRouter, HTTPException, Query
 
-from core.exceptions import ConfirmationRequiredError, MetadataAnalyzerError
+from core.exceptions import ConfirmationRequiredError, MetadataAnalyzerError, NeedsReanalysisError
 from database.db import get_db
-from schemas.models import ReorganizeRequest, ReorganizeStarted
+from schemas.models import (
+    FolderDecisionRequest, ReorganizePreviewRequest, ReorganizeRequest, ReorganizeStarted,
+)
 from services import reorganize_service
 
 router = APIRouter(prefix="/reorganize", tags=["reorganize"])
@@ -22,9 +24,22 @@ async def create_reorganize(req: ReorganizeRequest):
             req.base_mode, req.base_folder, req.layout, req.date_source)
     except ConfirmationRequiredError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e))
+    except NeedsReanalysisError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e))
     except MetadataAnalyzerError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e))
     return ReorganizeStarted(**res)
+
+
+@router.post("/preview")
+async def preview_reorganize(req: ReorganizePreviewRequest):
+    """Previsualización de solo lectura (sin gate ni confirmación): nunca mueve nada."""
+    try:
+        return reorganize_service.preview(
+            req.session_id, req.subfolders, req.base_mode, req.base_folder,
+            req.layout, req.date_source)
+    except MetadataAnalyzerError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e))
 
 
 # --- rutas literales ANTES de /{run_id} ---
@@ -37,6 +52,46 @@ async def layout_presets():
 @router.get("/runs")
 async def list_runs(session_id: int):
     return {"runs": get_db().list_reorganize_runs(session_id)}
+
+
+@router.get("/gate")
+async def gate(session_id: int):
+    """¿Puede reestructurarse esta sesión, o hace falta volver a analizar antes?"""
+    db = get_db()
+    if not db.get_session(session_id):
+        raise HTTPException(status_code=404, detail="sesión no encontrada")
+    blocked = db.has_real_corrections(session_id)
+    return {"blocked": blocked,
+            "reason": ("Esta sesión tiene correcciones reales de metadatos aplicadas; "
+                      "vuelve a analizar la carpeta antes de reestructurarla.")
+                     if blocked else None}
+
+
+@router.get("/folder-decisions")
+async def list_folder_decisions(session_id: int):
+    return {"decisions": get_db().get_folder_decisions(session_id)}
+
+
+@router.post("/folder-decision")
+async def set_folder_decision(req: FolderDecisionRequest):
+    db = get_db()
+    if not db.get_session(req.session_id):
+        raise HTTPException(status_code=404, detail="sesión no encontrada")
+    fields: dict = {}
+    if req.structure_mode is not None:
+        fields["structure_mode"] = req.structure_mode
+    if req.clear_structure_layout:
+        fields["structure_layout"] = None
+    elif req.structure_layout is not None:
+        fields["structure_layout"] = req.structure_layout
+    did = db.set_folder_decision(req.session_id, req.folder, **fields)
+    return {"id": did, **db.get_folder_decision(req.session_id, req.folder)}
+
+
+@router.delete("/folder-decision")
+async def delete_folder_decision(session_id: int, folder: str):
+    get_db().delete_folder_decision(session_id, folder)
+    return {"deleted": folder}
 
 
 @router.get("/{run_id}")

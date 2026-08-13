@@ -3,9 +3,9 @@
 import type {
   AnalysisRequest, AnalysisStarted, AnalyzedFile, BrowseResult, ConnectionTestRequest,
   ConnectionTestResult, CorrectionRequest, CorrectionRow, CorrectionStarted, FolderDecision,
-  FolderNode, FormatCatalog, LayoutPreset, MetadataMode, PlanPreviewRequest, PlanPreviewResult,
-  ProgressEvent, ReorganizeMove, ReorganizeRequest, ReorganizeRunSummary, ReorganizeStarted,
-  SessionSummary, StructureMode, UnifiedRunRequest, UnifiedRunResult, UnifiedRunStarted,
+  FolderNode, FormatCatalog, GateStatus, LayoutPreset, ProgressEvent, ReorganizeMove,
+  ReorganizePreviewRequest, ReorganizePreviewResult, ReorganizeRequest, ReorganizeRunSummary,
+  ReorganizeStarted, SessionSummary, StructureMode,
 } from '../types/api';
 
 // Config de runtime inyectada por el servidor (window.__MA_CONFIG__ en MainLayout).
@@ -96,43 +96,16 @@ export const api = {
 
   reportUrl: (id: number) => `${API_BASE}/results/${id}/report`,
 
-  // --- correcciones ---
+  // --- Paso 1: Metadatos ---
   startCorrection: (body: CorrectionRequest) =>
     request<CorrectionStarted>('/corrections', { method: 'POST', body: JSON.stringify(body) }),
 
-  getPatternPresets: () =>
-    request<{ presets: Array<{ key: string; label: string; pattern: string; source: string }> }>(
-      '/corrections/pattern-presets'),
-
-  createOverride: (body: { session_id: number; folder: string; pattern: string; source?: string }) =>
-    request<{ id: number; folder: string; pattern: string; source: string; affected: number;
-              rescued: number;
-              preview: Array<{ path: string; old: string | null; new: string;
-                               precision: string; rescued: boolean }> }>(
-      '/corrections/overrides', { method: 'POST', body: JSON.stringify(body) }),
-
-  listOverrides: (sessionId: number) =>
-    request<{ overrides: Array<{ id: number; folder: string; pattern: string; source: string }> }>(
-      `/corrections/overrides?session_id=${sessionId}`),
-
-  deleteOverride: (id: number) =>
-    request<{ deleted: number }>(`/corrections/overrides/${id}`, { method: 'DELETE' }),
-
-  getDateOptions: (sessionId: number, path: string) =>
-    request<{ path: string; media_type: string; exif: string | null;
-              recommended: string | null; needs_correction: boolean;
-              options: Array<{ source: string; label: string; value: string;
-                               precision: string | null }> }>(
-      `/corrections/date-options?session_id=${sessionId}&path=${encodeURIComponent(path)}`),
-
-  setFileOverride: (body: { session_id: number; path: string; kind: string;
-                            value?: string; precision?: string }) =>
-    request<{ id: number; path: string; kind: string; new: string | null; precision: string | null }>(
+  setFileOverride: (body: { session_id: number; path: string; kind: 'keep' | 'filename' | 'folder' }) =>
+    request<{ id: number; path: string; kind: string }>(
       '/corrections/file-overrides', { method: 'POST', body: JSON.stringify(body) }),
 
   listFileOverrides: (sessionId: number) =>
-    request<{ file_overrides: Array<{ id: number; path: string; kind: string;
-                                      value: string | null; precision: string | null }> }>(
+    request<{ file_overrides: Array<{ id: number; path: string; kind: string }> }>(
       `/corrections/file-overrides?session_id=${sessionId}`),
 
   deleteFileOverride: (sessionId: number, path: string) =>
@@ -152,15 +125,34 @@ export const api = {
     }>(`/corrections/${runId}?${q.toString()}`);
   },
 
-  // --- reorganización (Fase 2) ---
+  // --- Paso 2: Estructura de carpetas ---
   startReorganize: (body: ReorganizeRequest) =>
     request<ReorganizeStarted>('/reorganize', { method: 'POST', body: JSON.stringify(body) }),
+
+  getReorganizeGate: (sessionId: number) =>
+    request<GateStatus>(`/reorganize/gate?session_id=${sessionId}`),
+
+  getReorganizePreview: (body: ReorganizePreviewRequest) =>
+    request<ReorganizePreviewResult>('/reorganize/preview', { method: 'POST', body: JSON.stringify(body) }),
 
   getLayoutPresets: () =>
     request<{ presets: LayoutPreset[] }>('/reorganize/layout-presets'),
 
   listReorganizeRuns: (sessionId: number) =>
     request<{ runs: ReorganizeRunSummary[] }>(`/reorganize/runs?session_id=${sessionId}`),
+
+  listStructureFolderDecisions: (sessionId: number) =>
+    request<{ decisions: FolderDecision[] }>(`/reorganize/folder-decisions?session_id=${sessionId}`),
+
+  setStructureFolderDecision: (body: { session_id: number; folder: string;
+                                       structure_mode?: StructureMode; structure_layout?: string;
+                                       clear_structure_layout?: boolean }) =>
+    request<FolderDecision>('/reorganize/folder-decision', { method: 'POST', body: JSON.stringify(body) }),
+
+  deleteStructureFolderDecision: (sessionId: number, folder: string) =>
+    request<{ deleted: string }>(
+      `/reorganize/folder-decision?session_id=${sessionId}&folder=${encodeURIComponent(folder)}`,
+      { method: 'DELETE' }),
 
   getReorganizeRun: (runId: string, opts: { only_changes?: boolean;
                                             limit?: number; offset?: number } = {}) => {
@@ -177,39 +169,6 @@ export const api = {
   undoReorganize: (runId: string) =>
     request<{ undone: number; failed: Array<{ path: string; error: string }> }>(
       `/reorganize/${runId}/undo`, { method: 'POST' }),
-
-  // --- árbol de asignación unificado (Fase 3) ---
-  listFolderDecisions: (sessionId: number) =>
-    request<{ decisions: FolderDecision[] }>(`/plan/folder-decisions?session_id=${sessionId}`),
-
-  setFolderDecision: (body: { session_id: number; folder: string; metadata_mode?: MetadataMode;
-                              structure_mode?: StructureMode; structure_layout?: string;
-                              clear_structure_layout?: boolean }) =>
-    request<FolderDecision>('/plan/folder-decision', { method: 'POST', body: JSON.stringify(body) }),
-
-  deleteFolderDecision: (sessionId: number, folder: string) =>
-    request<{ deleted: string }>(
-      `/plan/folder-decision?session_id=${sessionId}&folder=${encodeURIComponent(folder)}`,
-      { method: 'DELETE' }),
-
-  startPlanRun: (body: UnifiedRunRequest) =>
-    request<UnifiedRunStarted>('/plan/run', { method: 'POST', body: JSON.stringify(body) }),
-
-  getPlanPreview: (body: PlanPreviewRequest) =>
-    request<PlanPreviewResult>('/plan/preview', { method: 'POST', body: JSON.stringify(body) }),
-
-  getPlanRun: (runId: string, opts: { only_changes?: boolean;
-                                      limit?: number; offset?: number } = {}) => {
-    const q = new URLSearchParams();
-    if (opts.only_changes) q.set('only_changes', 'true');
-    if (opts.limit) q.set('limit', String(opts.limit));
-    if (opts.offset) q.set('offset', String(opts.offset));
-    return request<UnifiedRunResult>(`/plan/run/${runId}?${q.toString()}`);
-  },
-
-  undoPlanRun: (runId: string) =>
-    request<{ undone: number; failed: Array<{ path: string; error: string }> }>(
-      `/plan/run/${runId}/undo`, { method: 'POST' }),
 };
 
 // --- WebSocket de progreso ---

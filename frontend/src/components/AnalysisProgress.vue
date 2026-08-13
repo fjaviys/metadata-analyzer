@@ -40,12 +40,6 @@
       <div v-if="phase === 'reorganize'">
         <span class="text-slate-400">Fallidos:</span> {{ ev?.failed ?? 0 }}
       </div>
-      <div v-if="phase === 'plan'">
-        <span class="text-slate-400">Metadatos verificados:</span> {{ ev?.verified ?? 0 }}
-      </div>
-      <div v-if="phase === 'plan'">
-        <span class="text-slate-400">Movidos:</span> {{ ev?.moved ?? 0 }}
-      </div>
     </div>
 
     <p v-if="ev?.current_file" class="truncate text-xs text-slate-400" :title="ev.current_file">
@@ -76,7 +70,6 @@ const phase = computed(() => ev.value?.phase ?? (props.kind === 'run' ? 'correct
 const phaseLabel = computed(() => {
   if (phase.value === 'correction') return 'Corrigiendo metadatos';
   if (phase.value === 'reorganize') return 'Reorganizando carpetas';
-  if (phase.value === 'plan') return 'Aplicando cambios';
   return 'Analizando';
 });
 const done = computed(() => ev.value?.status === 'completed');

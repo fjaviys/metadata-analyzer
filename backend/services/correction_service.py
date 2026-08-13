@@ -1,13 +1,19 @@
 """
-services/correction_service.py — Orquesta la corrección de metadatos.
+services/correction_service.py — Orquesta la corrección de metadatos (Paso 1).
 
-Seguridad:
-- Solo actúa sobre ficheros marcados `needs_correction` de la sesión.
-- Valida subcarpetas seleccionadas dentro de la raíz de la sesión.
-- REAL requiere `confirm_real_write=True`; si no, se rechaza
-  (ConfirmationRequiredError). El dry-run está siempre disponible.
-- Backup previo por run (core/backup) y abort+restore si el ratio de errores
-  supera el umbral (lo gestiona correction_engine).
+Modelo (simplificado, Fase 4): por archivo, una decisión explícita
+(`file_overrides.kind`):
+  - 'keep'      -> no se toca (comportamiento por defecto si no hay decisión;
+                   nunca se corrige nada sin que el usuario lo pida).
+  - 'filename'  -> fecha detectada en el NOMBRE de archivo.
+  - 'folder'    -> fecha detectada en la CARPETA contenedora.
+En ambos casos se re-detecta con `date_detector` (mismo cálculo que hizo el
+análisis para `filename_date`/`path_date`) para tener la precisión exacta. Si
+esa fuente no tiene fecha para el archivo, se omite: nunca se fabrica una.
+
+Seguridad: REAL requiere `confirm_real_write=True` (si no,
+ConfirmationRequiredError); el dry-run está siempre disponible. Backup previo
+por run y abort+restore por ratio de error (lo gestiona correction_engine).
 """
 
 from __future__ import annotations
@@ -15,10 +21,9 @@ from __future__ import annotations
 import asyncio
 import os
 import uuid
-from typing import Optional
 
 import bootstrap  # noqa: F401
-import pattern_parser as pp
+import date_detector as dd
 from correction_engine import CorrectionEngine
 
 from core.config import settings
@@ -39,132 +44,40 @@ def _under_folder(path: str, folder: str) -> bool:
     return path == folder or path.startswith(folder + os.sep)
 
 
-def _candidates(session_id: int, subfolders: list[str], root: str) -> list[dict]:
+_DETECTORS = {"filename": dd.detect_from_filename, "folder": dd.detect_from_path}
+
+
+def build_metadata_candidates(session_id: int, subfolders: list[str], root: str) -> list[dict]:
     """
-    Candidatos a corregir. Una subcarpeta seleccionada incluye TODAS sus
-    subcarpetas y archivos a cualquier nivel de profundidad (recursivo).
-    Sin selección → todos los archivos de la sesión que requieren corrección.
-    """
-    db = get_db()
-    all_rows = db.get_files(session_id, needs_correction=True, limit=1_000_000)
-    if not subfolders:
-        return all_rows
-    real_subs = validate_subfolders(root, subfolders)
-    seen: dict[str, dict] = {}
-    for row in all_rows:
-        if any(_under_folder(row["path"], sub) for sub in real_subs):
-            seen[row["path"]] = row
-    return list(seen.values())
-
-
-def apply_overrides(session_id: int, rows: list[dict]) -> list[dict]:
-    """
-    Aplica los overrides de patrón de la sesión a las filas indicadas: recalcula
-    la fecha propuesta de cada archivo bajo una carpeta con override (el override
-    más profundo gana). Modifica y devuelve las filas.
-    """
-    overrides = get_db().get_overrides(session_id)   # más profundos primero
-    if not overrides:
-        return rows
-    for row in rows:
-        for ov in overrides:
-            if _under_folder(row["path"], ov["folder"]):
-                det = pp.resolve(row["path"], ov["pattern"], ov.get("source", "auto"))
-                if det and det.is_valid:
-                    row["recommended_date"] = det.to_exif_string()
-                    row["recommended_precision"] = det.precision.label
-                    row["recommended_source"] = "override"
-                    row["needs_correction"] = True
-                break
-    return rows
-
-
-def _override_for(path: str, overrides: list[dict]) -> Optional[dict]:
-    """Override más profundo (la lista viene ordenada por profundidad desc)."""
-    for ov in overrides:
-        if _under_folder(path, ov["folder"]):
-            return ov
-    return None
-
-
-def override_correction(row: dict, ov: dict) -> bool:
-    """
-    Aplica el patrón del override a `row`. Devuelve True si genera una corrección
-    (recalcula recommended_*), incluso "rescatando" archivos que el análisis NO
-    marcó. Idempotente: si el EXIF ya coincide exactamente, no corrige.
-    """
-    det = pp.resolve(row["path"], ov["pattern"], ov.get("source", "auto"))
-    if not (det and det.is_valid):
-        return False
-    new = det.to_exif_string()
-    if row.get("has_exif_date") and row.get("exif_date") == new:
-        return False
-    row["recommended_date"] = new
-    row["recommended_precision"] = det.precision.label
-    row["recommended_source"] = "override"
-    row["needs_correction"] = 1
-    return True
-
-
-def file_override_result(row: dict, fo: dict) -> Optional[str]:
-    """
-    Aplica una decisión POR ARCHIVO. Devuelve 'set' (modificó row), 'skip'
-    (excluir explícitamente) o None (sin efecto → seguir con carpeta/análisis).
-    """
-    kind = fo.get("kind")
-    if kind == "skip":
-        return "skip"
-    if kind == "date_value" and fo.get("value"):
-        new = fo["value"]
-        prec = fo.get("precision") or "FULL_DATE"
-    elif kind == "date_pattern" and fo.get("value"):
-        det = pp.resolve(row["path"], fo["value"], "auto")
-        if not (det and det.is_valid):
-            return None
-        new, prec = det.to_exif_string(), det.precision.label
-    else:
-        return None
-    if row.get("has_exif_date") and row.get("exif_date") == new:
-        return "skip"   # idempotente: ya tiene esa fecha
-    row["recommended_date"] = new
-    row["recommended_precision"] = prec
-    row["recommended_source"] = "file-override"
-    row["needs_correction"] = 1
-    return "set"
-
-
-def build_candidates(session_id: int, subfolders: list[str], root: str) -> list[dict]:
-    """
-    Construye los candidatos a corregir combinando, por prioridad:
-      1) decisión POR ARCHIVO (file_overrides): valor fijo, patrón o "no cambiar",
-      2) override por CARPETA (rescata archivos no marcados),
-      3) lo que el análisis marcó (needs_correction).
-    Respeta la selección de subcarpetas.
+    Candidatos a corregir según la decisión explícita de cada archivo. Sin
+    decisión (o 'keep') no se toca. 'filename'/'folder' re-detectan la fecha
+    con `date_detector` sobre esa fuente; si no hay fecha, se omite.
     """
     db = get_db()
-    overrides = db.get_overrides(session_id)              # más profundos primero
     file_ovs = {fo["path"]: fo for fo in db.get_file_overrides(session_id)}
-    all_rows = db.get_files(session_id, limit=1_000_000)  # TODAS (para rescate)
+    all_rows = db.get_files(session_id, limit=1_000_000)
     real_subs = validate_subfolders(root, subfolders) if subfolders else None
 
     out: list[dict] = []
     for row in all_rows:
-        if real_subs is not None and not any(_under_folder(row["path"], s) for s in real_subs):
+        path = row["path"]
+        if real_subs is not None and not any(_under_folder(path, s) for s in real_subs):
             continue
-        fo = file_ovs.get(row["path"])
-        if fo is not None:
-            res = file_override_result(row, fo)
-            if res == "set":
-                out.append(row)
-                continue
-            if res == "skip":
-                continue
-            # res None -> cae a carpeta/análisis
-        ov = _override_for(row["path"], overrides)
-        if ov is not None and override_correction(row, ov):
-            out.append(row)
-        elif row.get("needs_correction"):
-            out.append(row)
+        fo = file_ovs.get(path)
+        if fo is None or fo["kind"] == "keep":
+            continue
+        detector = _DETECTORS.get(fo["kind"])
+        det = detector(path) if detector else None
+        if det is None or not det.is_valid:
+            continue  # esa fuente no tiene fecha para este archivo: se omite
+        new_value = det.to_exif_string()
+        if row.get("has_exif_date") and row.get("exif_date") == new_value:
+            continue  # idempotente: ya coincide
+        row["recommended_date"] = new_value
+        row["recommended_precision"] = det.precision.label
+        row["recommended_source"] = fo["kind"]
+        row["needs_correction"] = 1
+        out.append(row)
     return out
 
 
@@ -187,7 +100,7 @@ async def start_correction(session_id: int, subfolders: list[str],
         )
 
     root = session["root"]
-    candidates = build_candidates(session_id, subfolders, root)
+    candidates = build_metadata_candidates(session_id, subfolders, root)
     run_id = uuid.uuid4().hex[:12]
 
     log.info(f"corrección {'DRY-RUN' if dry_run else 'REAL'} run={run_id} "

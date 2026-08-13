@@ -464,28 +464,18 @@ class DatabaseManager:
             q += " AND correction_type != 'skip' AND status != 'skipped'"
         return int(self.conn.execute(q, args).fetchone()["n"])
 
-    # ------------------------------------------------------------------ overrides
-    def add_override(self, session_id: int, folder: str, pattern: str,
-                     source: str = "auto") -> int:
-        with self._tx() as c:
-            # un override por carpeta: sustituye el previo de la misma carpeta
-            c.execute("DELETE FROM path_overrides WHERE session_id=? AND folder=?",
-                      (session_id, folder))
-            cur = c.execute(
-                "INSERT INTO path_overrides(session_id, folder, pattern, source, created_at) "
-                "VALUES(?,?,?,?,?)",
-                (session_id, folder, pattern, source, _now()))
-            return int(cur.lastrowid)
+    def has_real_corrections(self, session_id: int) -> bool:
+        """True si esta sesión tiene alguna corrección REAL (dry_run=0) aplicada.
+        Se usa para bloquear la reestructuración de carpetas hasta re-analizar."""
+        row = self.conn.execute(
+            "SELECT 1 FROM corrections WHERE session_id=? AND dry_run=0 LIMIT 1",
+            (session_id,)).fetchone()
+        return row is not None
 
-    def get_overrides(self, session_id: int) -> list[dict]:
-        rows = self.conn.execute(
-            "SELECT * FROM path_overrides WHERE session_id=? ORDER BY LENGTH(folder) DESC, id",
-            (session_id,)).fetchall()
-        return [dict(r) for r in rows]
-
-    def delete_override(self, override_id: int) -> None:
-        with self._tx() as c:
-            c.execute("DELETE FROM path_overrides WHERE id=?", (override_id,))
+    # NOTA: la tabla `path_overrides` (patrón de detección manual por carpeta,
+    # Fase 1) se queda en el esquema sin CRUD activo — el paso de Metadatos
+    # (Fase 4) ya no ofrece patrón manual, solo nombre de archivo/carpeta
+    # contenedora. Ver docs/SECURITY.md.
 
     # ---- overrides por archivo (decisión individual) ----
     def set_file_override(self, session_id: int, path: str, kind: str,

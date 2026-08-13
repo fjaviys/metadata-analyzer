@@ -78,22 +78,16 @@ digiKam, etc. (no solo un tag), la corrección escribe un conjunto amplio:
 Se usa `exiftool -m` para ignorar avisos de tags no aplicables a un formato concreto
 sin abortar. La verificación re-lee los tags relevantes al tipo de medio.
 
-## Decisión por archivo (override individual)
+## Decisión por archivo (Paso 1: Metadatos)
 
-En el árbol de resultados, cada archivo admite una decisión propia que tiene
-**prioridad sobre el override de carpeta y sobre la recomendación del análisis**:
-mantener la recomendación, elegir una de las opciones sugeridas (con su valor de
-ejemplo para ESE archivo), introducir un patrón manual, o marcar "no cambiar"
-(exclusión explícita). Es idempotente igual que el resto del motor: si el EXIF ya
-coincide con el valor elegido, no se reescribe.
-
-## Rescate de archivos no marcados por el análisis
-
-Un patrón manual (override) aplicado a una carpeta corrige **todos** sus archivos a
-cualquier nivel, incluidos los que el análisis **no** marcó (p. ej. con EXIF dentro
-de rango pero incorrecto). Es idempotente: si el EXIF ya coincide exactamente con la
-fecha del patrón, ese archivo se omite (no se reescribe). Sigue habiendo backup +
-verificación por archivo y modo dry-run.
+Cada archivo tiene una decisión explícita de 3 opciones (tabla `file_overrides`,
+`kind`): **mantener** (default si no hay decisión — nunca se corrige nada sin que
+el usuario lo pida), **nombre de archivo** o **carpeta contenedora**. Las dos
+últimas usan `filename_date`/`path_date`, ya calculados por `date_detector` en el
+análisis; si esa fuente no tiene fecha para el archivo, se rechaza al crear la
+decisión (400) y, aunque se fuerce en BD, el motor la omite igualmente — nunca
+fabrica una fecha. Es idempotente: si el EXIF ya coincide con el valor resuelto,
+no se reescribe.
 
 ## Acciones prohibidas
 
@@ -137,31 +131,28 @@ Mueve archivos a una estructura de carpetas por fecha **sin tocar sus metadatos*
   archivo con exiftool en el momento de reorganizar (útil si ya se ejecutó una
   corrección real antes).
 
-## Árbol de asignación unificado (Fase 3)
+## Dos pasos independientes: Metadatos y Estructura (Fase 4)
 
-Combina, por carpeta y por archivo, dos ejes independientes: **metadatos**
-(¿se corrige el EXIF?) y **estructura** (¿se mueve a una carpeta por fecha?),
-en una sola ejecución (dry-run/real) que primero corrige y luego mueve.
+Correcciones (`/corrections`) y Reorganización (`/reorganize`) son pasos
+**secuenciales e independientes** — cada uno con su propia página, árbol y
+ejecución (dry-run/real). No comparten un único run.
 
-- **Defaults seguros por carpeta** (sin decisión explícita): metadatos =
-  `update` (comportamiento histórico de Fase 1: se corrige lo que el análisis
-  marque), estructura = `keep` (nada se mueve salvo que el usuario lo pida
-  explícitamente). El eje "mover" nunca está activo por defecto.
-- **Herencia por profundidad de carpeta**: la carpeta más profunda que
-  contiene al archivo decide (igual criterio que `path_overrides`); una
-  decisión explícita en un archivo (`file_overrides`) tiene siempre prioridad
-  sobre la carpeta.
-- **"Mantener metadatos" no significa "ignorar la fecha conocida".** Si la
-  estructura se actualiza para un archivo cuyo metadato se mantiene, la
-  carpeta destino se calcula con la mejor fecha que la sesión conoce
-  (recomendada si el análisis la marcó, si no el EXIF), nunca inventada; el
-  EXIF del archivo permanece intacto.
-- **El layout de destino por carpeta es independiente del patrón de
-  detección** (`path_overrides`): son dos overrides distintos con propósitos
-  distintos y no se mezclan.
-- El **undo** de un run unificado solo revierte los **movimientos** (igual
-  que en Fase 2); las correcciones de metadatos no se deshacen automáticamente
-  y solo se pueden restaurar manualmente desde `data/backups/`.
+- **Estructura por carpeta** (tabla `folder_decisions`, campo `structure_mode`):
+  herencia por profundidad de carpeta (la más profunda que contiene al archivo
+  decide), default `keep` — nada se mueve salvo que el usuario lo pida
+  explícitamente para esa carpeta o un ancestro suyo. La carpeta raíz analizada
+  nunca se mueve. El patrón de agrupación (`structure_layout`) puede fijarse
+  por carpeta, con un layout global por defecto para las que no tengan uno
+  propio.
+- **Bloqueo por re-análisis**: si una sesión tiene alguna corrección REAL de
+  metadatos aplicada (`has_real_corrections`), el paso de Estructura se
+  rechaza para esa sesión (**409 Conflict**) hasta volver a analizar la
+  carpeta — los datos de la sesión pueden no reflejar ya lo que hay en disco.
+  Tras una corrección real, la UI también muestra un aviso proactivo
+  recomendando re-analizar antes de continuar.
+- El **undo** de un run de reorganización solo revierte los **movimientos**;
+  las correcciones de metadatos no se deshacen automáticamente y solo se
+  pueden restaurar manualmente desde `data/backups/`.
 
 ## Recuperación manual
 
