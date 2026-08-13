@@ -1,5 +1,5 @@
 <template>
-  <div class="relative">
+  <div class="relative" ref="rootEl">
     <label v-if="label" class="label">{{ label }}</label>
     <div class="flex gap-2">
       <input
@@ -9,10 +9,10 @@
         :placeholder="placeholder"
         autocomplete="off"
         @input="onInput(($event.target as HTMLInputElement).value)"
-        @focus="open = true; refresh()"
+        @focus="onFocus"
         @keydown.escape="open = false"
       />
-      <button class="btn-ghost" type="button" @click="goUp" :disabled="!current.parent && !hasSlash"
+      <button class="btn-ghost" type="button" @click="goUp" :disabled="!current.parent"
               title="Subir un nivel">↑</button>
     </div>
 
@@ -49,7 +49,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { api } from '../api/client';
 import type { BrowseEntry, BrowseResult } from '../types/api';
 import LoadingSpinner from './LoadingSpinner.vue';
@@ -65,54 +65,56 @@ const emit = defineEmits<{ (e: 'update:modelValue', v: string): void }>();
 const open = ref(false);
 const loading = ref(false);
 const current = ref<BrowseResult>({ path: '', parent: null, dirs: [] });
+const rootEl = ref<HTMLElement | null>(null);
+// Texto de filtro SOLO mientras se escribe (independiente del valor
+// seleccionado); '' significa "sin filtro, listar todo lo que devolvió browsePath".
+const filterText = ref('');
 let timer: ReturnType<typeof setTimeout> | null = null;
 
-const hasSlash = computed(() => props.modelValue.includes('/'));
-
-// Fragmento tras la última barra (para autocompletar) y directorio a listar.
-const frag = computed(() => {
-  const v = props.modelValue;
-  const i = v.lastIndexOf('/');
-  return i >= 0 ? v.slice(i + 1) : v;
-});
-const dirPart = computed(() => {
-  const v = props.modelValue;
-  const i = v.lastIndexOf('/');
-  return i > 0 ? v.slice(0, i) : (i === 0 ? '/' : '');
-});
-
 const filtered = computed(() => {
-  const f = frag.value.toLowerCase();
+  const f = filterText.value.toLowerCase();
   if (!f) return current.value.dirs;
   return current.value.dirs.filter((d) => d.name.toLowerCase().includes(f));
 });
 
-function onInput(v: string) {
-  emit('update:modelValue', v);
-  open.value = true;
-  debounceRefresh();
-}
-
-function debounceRefresh() {
-  if (timer) clearTimeout(timer);
-  timer = setTimeout(refresh, 250);
-}
-
-async function refresh() {
+async function browsePath(path: string) {
   loading.value = true;
   try {
-    current.value = await api.browse(dirPart.value);
+    current.value = await api.browse(path);
   } catch {
-    current.value = { path: dirPart.value, parent: null, dirs: [] };
+    current.value = { path, parent: null, dirs: [] };
   } finally {
     loading.value = false;
   }
 }
 
-function choose(d: BrowseEntry) {
-  emit('update:modelValue', d.path + '/');
+// Al enfocar: muestra el contenido de la carpeta YA seleccionada (el valor
+// exacto actual), no de un supuesto "padre" calculado a partir del texto.
+function onFocus() {
+  filterText.value = '';
   open.value = true;
-  refresh();
+  browsePath(props.modelValue);
+}
+
+function onInput(v: string) {
+  emit('update:modelValue', v);
+  open.value = true;
+  const i = v.lastIndexOf('/');
+  const dir = i > 0 ? v.slice(0, i) : '';
+  filterText.value = i >= 0 ? v.slice(i + 1) : v;
+  debounceRefresh(dir);
+}
+
+function debounceRefresh(dir: string) {
+  if (timer) clearTimeout(timer);
+  // mientras se escribe, se filtra dentro del padre del texto tecleado
+  timer = setTimeout(() => browsePath(dir), 250);
+}
+
+function choose(d: BrowseEntry) {
+  filterText.value = '';
+  emit('update:modelValue', d.path);
+  open.value = false;
 }
 
 function useCurrent() {
@@ -121,12 +123,23 @@ function useCurrent() {
 }
 
 function goUp() {
-  const target = current.value.parent ?? dirPart.value;
+  const target = current.value.parent;
   if (target) {
-    emit('update:modelValue', target + '/');
-    refresh();
+    filterText.value = '';
+    emit('update:modelValue', target);
+    browsePath(target);
   }
 }
 
-onBeforeUnmount(() => { if (timer) clearTimeout(timer); });
+function onDocClick(e: MouseEvent) {
+  if (open.value && rootEl.value && !rootEl.value.contains(e.target as Node)) {
+    open.value = false;
+  }
+}
+
+onMounted(() => document.addEventListener('click', onDocClick));
+onBeforeUnmount(() => {
+  document.removeEventListener('click', onDocClick);
+  if (timer) clearTimeout(timer);
+});
 </script>
