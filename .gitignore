@@ -36,8 +36,10 @@ yarn-error.log*
 docker/nginx/certs/*
 !docker/nginx/certs/.gitkeep
 
-# Claude Code local settings
-.claude/
+# Claude Code — shared project config IS versioned (CLAUDE.md, .claude/settings.json,
+# commands, agents, rules). Only machine-local overrides stay out.
+.claude/settings.local.json
+CLAUDE.local.md
 
 # Editors / OS
 .vscode/

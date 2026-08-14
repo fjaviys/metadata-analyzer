@@ -1,0 +1,31 @@
+{
+  "model": "claude-sonnet-5",
+  "effort": "high",
+  "permissions": {
+    "allow": [
+      "Bash(.venv/bin/python -m pytest tests/*)",
+      "Bash(npm run build)",
+      "Bash(npm run dev*)",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git branch*)",
+      "Bash(exiftool -s3*)",
+      "Bash(gh run *)",
+      "Bash(gh api *)"
+    ],
+    "ask": [
+      "Bash(git commit*)",
+      "Bash(git push*)",
+      "Bash(git merge*)",
+      "Bash(git tag*)",
+      "Bash(gh pr create*)",
+      "Bash(exiftool -overwrite_original*)"
+    ],
+    "deny": [
+      "Read(./data/**)",
+      "Read(./.env)",
+      "Read(./docker/nginx/certs/**)"
+    ]
+  }
+}
