@@ -95,34 +95,11 @@ def test_reorganize_layout_presets():
     assert any(p["layout"] == "AAAA/MM" for p in r.json()["presets"])
 
 
-def test_folder_decision_upsert_via_reorganize_api():
-    db = get_db()
-    sid = db.create_session(tempfile.gettempdir(), "local")
-    db.finish_session(sid, {"total_files": 0})
-    folder = os.path.join(tempfile.gettempdir(), "algunacarpeta")
-
-    r = client.post("/api/reorganize/folder-decision", json={
-        "session_id": sid, "folder": folder, "structure_mode": "update"})
-    assert r.status_code == 200
-    body = r.json()
-    assert body["structure_mode"] == "update"
-    assert body["structure_layout"] is None
-
-    # actualización parcial: solo toca structure_layout, structure_mode se conserva
-    r = client.post("/api/reorganize/folder-decision", json={
-        "session_id": sid, "folder": folder, "structure_layout": "AAAA-MM"})
-    assert r.status_code == 200
-    body = r.json()
-    assert body["structure_mode"] == "update"  # conservado
-    assert body["structure_layout"] == "AAAA-MM"
-
-    r = client.get(f"/api/reorganize/folder-decisions?session_id={sid}")
-    assert r.status_code == 200
-    assert len(r.json()["decisions"]) == 1
-
-    r = client.delete(f"/api/reorganize/folder-decision?session_id={sid}&folder={folder}")
-    assert r.status_code == 200
-    assert client.get(f"/api/reorganize/folder-decisions?session_id={sid}").json()["decisions"] == []
+def test_folder_decision_endpoints_are_gone():
+    """El paso de Estructura ya no tiene decisiones por carpeta (un solo patrón)."""
+    paths = client.get("/openapi.json").json()["paths"]
+    assert "/api/reorganize/folder-decision" not in paths
+    assert "/api/reorganize/folder-decisions" not in paths
 
 
 def test_reorganize_gate_blocks_after_real_correction():
@@ -154,48 +131,55 @@ def test_reorganize_gate_blocks_after_real_correction():
 
 
 @pytest.mark.skipif(not _REAL, reason="requiere Pillow y exiftool")
-def test_e2e_structure_plan_per_folder_and_preview():
+def test_e2e_structure_plan_global_pattern_and_roots():
     """
-    Solo folderA se marca 'actualizar estructura'; folderB se deja en
-    'mantener' (default) y ni se evalúa ni se mueve.
+    Un solo patrón para todo el análisis. Cada archivo se agrupa dentro de su
+    RAÍZ: 'vacaciones 2009' (texto + fecha) se conserva y no se pela; las
+    subcarpetas de fecha pura sí. Un archivo sin fecha fiable se omite.
     """
     loop = asyncio.new_event_loop()
     t = threading.Thread(target=loop.run_forever, daemon=True)
     t.start()
     try:
         media = tempfile.mkdtemp(prefix="ma_media_struct_", dir=tempfile.gettempdir())
-        folder_a = os.path.join(media, "folderA")
-        folder_b = os.path.join(media, "folderB")
-        os.makedirs(folder_a)
-        os.makedirs(folder_b)
-        file_a = os.path.join(folder_a, "IMG_20200702.jpg")
-        file_b = os.path.join(folder_b, "IMG_20180101.jpg")
-        _jpeg(file_a, exif_date="2020:07:02 10:00:00")
-        _jpeg(file_b, exif_date="2018:01:01 10:00:00")
+        vac = os.path.join(media, "vacaciones 2009")     # raíz: texto + fecha
+        dated = os.path.join(vac, "2009", "08", "02")    # fecha pura: se pela
+        eventos = os.path.join(media, "eventos")         # raíz: solo texto
+        os.makedirs(dated)
+        os.makedirs(eventos)
+        file_vac = os.path.join(dated, "IMG_20090802.jpg")
+        file_ev = os.path.join(eventos, "IMG_20200702.jpg")
+        file_nodate = os.path.join(eventos, "escaneo.jpg")
+        _jpeg(file_vac, exif_date="2009:08:02 10:00:00")
+        _jpeg(file_ev, exif_date="2020:07:02 10:00:00")
+        _jpeg(file_nodate)                             # sin EXIF ni fecha en el nombre
 
         db = get_db()
         sid = db.create_session(media, "local")
         an._run_analysis_blocking(sid, media, None, True, None, loop)
         assert db.get_session(sid)["status"] == "completed"
 
-        db.set_folder_decision(sid, folder_a, structure_mode="update")
-
-        # preview: solo folderA aparece con destino real; folderB ni se evalúa
         r = client.post("/api/reorganize/preview", json={
             "session_id": sid, "base_mode": "auto", "layout": "AAAA/MM"})
         assert r.status_code == 200
-        moves_by_path = {m["path"]: m for m in r.json()["moves"]}
-        assert file_a in moves_by_path
-        assert file_b not in moves_by_path
-        expected_target_dir = os.path.join(folder_a, "2020", "07")
-        assert moves_by_path[file_a]["after_dir"] == expected_target_dir
+        moves = {m["path"]: m for m in r.json()["moves"]}
 
-        # ejecutar de verdad: folderB no se toca
+        # la raíz con texto+fecha se conserva; el destino cuelga de ella
+        assert moves[file_vac]["base_dir"] == vac
+        assert moves[file_vac]["after_dir"] == os.path.join(vac, "2009", "08")
+        # carpeta sin fecha: es su propia raíz
+        assert moves[file_ev]["base_dir"] == eventos
+        assert moves[file_ev]["after_dir"] == os.path.join(eventos, "2020", "07")
+        # sin fecha fiable -> se omite, nunca se inventa
+        assert "after_dir" not in moves[file_nodate]
+        assert "sin fecha" in moves[file_nodate]["skip_reason"]
+
+        # ejecutar de verdad
         plans = ro.build_structure_plan(sid, [], media, "auto", None, "AAAA/MM")
         ro._run_reorganize_blocking("structreal01", sid, plans, False, loop)
-        assert os.path.isfile(os.path.join(expected_target_dir, "IMG_20200702.jpg"))
-        assert not os.path.isfile(file_a)
-        assert os.path.isfile(file_b)  # sin tocar
+        assert os.path.isfile(os.path.join(vac, "2009", "08", "IMG_20090802.jpg"))
+        assert os.path.isfile(os.path.join(eventos, "2020", "07", "IMG_20200702.jpg"))
+        assert os.path.isfile(file_nodate)  # sin fecha: intacto
     finally:
         loop.call_soon_threadsafe(loop.stop)
         time.sleep(0.1)

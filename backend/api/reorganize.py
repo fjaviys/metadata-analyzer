@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Query
 from core.exceptions import ConfirmationRequiredError, MetadataAnalyzerError, NeedsReanalysisError
 from database.db import get_db
 from schemas.models import (
-    FolderDecisionRequest, ReorganizePreviewRequest, ReorganizeRequest, ReorganizeStarted,
+    ReorganizePreviewRequest, ReorganizeRequest, ReorganizeStarted,
 )
 from services import reorganize_service
 
@@ -65,33 +65,6 @@ async def gate(session_id: int):
             "reason": ("Esta sesión tiene correcciones reales de metadatos aplicadas; "
                       "vuelve a analizar la carpeta antes de reestructurarla.")
                      if blocked else None}
-
-
-@router.get("/folder-decisions")
-async def list_folder_decisions(session_id: int):
-    return {"decisions": get_db().get_folder_decisions(session_id)}
-
-
-@router.post("/folder-decision")
-async def set_folder_decision(req: FolderDecisionRequest):
-    db = get_db()
-    if not db.get_session(req.session_id):
-        raise HTTPException(status_code=404, detail="sesión no encontrada")
-    fields: dict = {}
-    if req.structure_mode is not None:
-        fields["structure_mode"] = req.structure_mode
-    if req.clear_structure_layout:
-        fields["structure_layout"] = None
-    elif req.structure_layout is not None:
-        fields["structure_layout"] = req.structure_layout
-    did = db.set_folder_decision(req.session_id, req.folder, **fields)
-    return {"id": did, **db.get_folder_decision(req.session_id, req.folder)}
-
-
-@router.delete("/folder-decision")
-async def delete_folder_decision(session_id: int, folder: str):
-    get_db().delete_folder_decision(session_id, folder)
-    return {"deleted": folder}
 
 
 @router.get("/{run_id}")

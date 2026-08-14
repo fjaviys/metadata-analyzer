@@ -7,7 +7,9 @@ from fastapi import APIRouter, HTTPException, Query
 
 from core.exceptions import ConfirmationRequiredError, MetadataAnalyzerError
 from database.db import get_db
-from schemas.models import CorrectionRequest, CorrectionStarted, FileOverrideRequest
+from schemas.models import (
+    BulkFileOverrideRequest, CorrectionRequest, CorrectionStarted, FileOverrideRequest,
+)
 from services import correction_service
 
 router = APIRouter(prefix="/corrections", tags=["corrections"])
@@ -44,6 +46,32 @@ async def create_file_override(req: FileOverrideRequest):
 
     oid = db.set_file_override(req.session_id, req.path, req.kind)
     return {"id": oid, "path": req.path, "kind": req.kind}
+
+
+@router.post("/file-overrides/bulk")
+async def create_file_overrides_bulk(req: BulkFileOverrideRequest):
+    """
+    Aplica la misma decisión a toda una selección. Los archivos cuya fuente no
+    tenga fecha detectada NO se aplican: se devuelven en `skipped` con el motivo
+    (nunca se fabrica una fecha, y el usuario ve por qué se han quedado fuera).
+    """
+    db = get_db()
+    column = {"filename": "filename_date", "folder": "path_date"}.get(req.kind)
+    label = "el nombre" if req.kind == "filename" else "la carpeta"
+
+    applied: list[str] = []
+    skipped: list[dict] = []
+    for path in req.paths:
+        row = db.get_file(req.session_id, path)
+        if not row:
+            skipped.append({"path": path, "reason": "archivo no encontrado en la sesión"})
+        elif column and not row.get(column):
+            skipped.append({"path": path, "reason": f"sin fecha detectada en {label}"})
+        else:
+            applied.append(path)
+
+    db.set_file_overrides_bulk(req.session_id, applied, req.kind)
+    return {"kind": req.kind, "applied": applied, "skipped": skipped}
 
 
 @router.get("/file-overrides")

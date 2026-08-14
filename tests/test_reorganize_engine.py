@@ -35,6 +35,39 @@ def test_compute_base_folder_no_date_folders():
     assert re_.compute_base_folder("/fotos/varios/IMG_0001.jpg") == "/fotos/varios"
 
 
+# --- raíz = carpeta con TEXTO + FECHA: se conserva, no se pela ----------------
+
+@pytest.mark.parametrize("root_name", ["vacaciones 2009", "vacaciones 200908",
+                                       "vacaciones_2009-08-02", "boda 02-10-2009"])
+def test_compute_base_folder_keeps_text_plus_date_root(root_name):
+    path = f"/fotos/{root_name}/2009/08/IMG_0001.jpg"
+    assert re_.compute_base_folder(path) == f"/fotos/{root_name}"
+
+
+@pytest.mark.parametrize("comp", ["2009", "20090802", "2009-08", "2009.08.02", "08", "2"])
+def test_pure_date_components_are_still_peeled(comp):
+    assert re_._component_is_date_like(comp) is True
+
+
+@pytest.mark.parametrize("comp", ["vacaciones 2009", "vacaciones200908", "IMG_2009",
+                                  "varios", "2009 fotos"])
+def test_text_plus_date_components_are_not_peeled(comp):
+    assert re_._component_is_date_like(comp) is False
+
+
+# --- el pelado nunca sube por encima de la raíz analizada ---------------------
+
+def test_compute_base_folder_never_climbs_above_stop_at():
+    # la raíz analizada se llama literalmente "2009": sin el tope, los archivos
+    # acabarían fuera del árbol analizado.
+    assert re_.compute_base_folder("/fotos/2009/08/IMG.jpg", stop_at="/fotos/2009") == "/fotos/2009"
+    assert re_.compute_base_folder("/fotos/2009/IMG.jpg", stop_at="/fotos/2009") == "/fotos/2009"
+
+
+def test_compute_base_folder_stop_at_outside_path_is_ignored():
+    assert re_.compute_base_folder("/otro/2009/IMG.jpg", stop_at="/fotos") == "/otro"
+
+
 # --------------------------- layout -------------------------------------------
 
 def test_format_layout_tokens():

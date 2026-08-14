@@ -490,6 +490,21 @@ class DatabaseManager:
                 (session_id, path, kind, value, precision, _now()))
             return int(cur.lastrowid)
 
+    def set_file_overrides_bulk(self, session_id: int, paths: list[str], kind: str) -> int:
+        """Aplica la misma decisión a muchos archivos en UNA sola transacción
+        (la UI aplica el patrón a toda una selección de golpe)."""
+        if not paths:
+            return 0
+        now = _now()
+        with self._tx() as c:
+            c.executemany("DELETE FROM file_overrides WHERE session_id=? AND path=?",
+                          [(session_id, p) for p in paths])
+            c.executemany(
+                "INSERT INTO file_overrides(session_id, path, kind, value, precision, created_at) "
+                "VALUES(?,?,?,?,?,?)",
+                [(session_id, p, kind, None, None, now) for p in paths])
+        return len(paths)
+
     def get_file_overrides(self, session_id: int) -> list[dict]:
         rows = self.conn.execute(
             "SELECT * FROM file_overrides WHERE session_id=? ORDER BY path",
@@ -594,48 +609,10 @@ class DatabaseManager:
         ).fetchall()
         return [dict(r) for r in rows]
 
-    # ------------------------------------------------------------------ folder_decisions (Fase 3)
-    def set_folder_decision(self, session_id: int, folder: str, **fields) -> int:
-        """
-        Upsert de la decisión de una carpeta sobre los dos ejes (metadatos/
-        estructura). Los campos NO incluidos en `fields` conservan su valor
-        previo (o el default si la fila no existía todavía). Campos válidos:
-        metadata_mode ('update'|'keep'), structure_mode ('update'|'keep'),
-        structure_layout (patrón custom o None).
-        """
-        existing = self.get_folder_decision(session_id, folder)
-        merged = {
-            "metadata_mode": existing["metadata_mode"] if existing else "update",
-            "structure_mode": existing["structure_mode"] if existing else "keep",
-            "structure_layout": existing["structure_layout"] if existing else None,
-        }
-        merged.update(fields)
-        with self._tx() as c:
-            c.execute("DELETE FROM folder_decisions WHERE session_id=? AND folder=?",
-                      (session_id, folder))
-            cur = c.execute(
-                "INSERT INTO folder_decisions(session_id, folder, metadata_mode, "
-                "structure_mode, structure_layout, created_at) VALUES(?,?,?,?,?,?)",
-                (session_id, folder, merged["metadata_mode"], merged["structure_mode"],
-                 merged["structure_layout"], _now()))
-            return int(cur.lastrowid)
-
-    def get_folder_decision(self, session_id: int, folder: str) -> Optional[dict]:
-        r = self.conn.execute(
-            "SELECT * FROM folder_decisions WHERE session_id=? AND folder=?",
-            (session_id, folder)).fetchone()
-        return dict(r) if r else None
-
-    def get_folder_decisions(self, session_id: int) -> list[dict]:
-        rows = self.conn.execute(
-            "SELECT * FROM folder_decisions WHERE session_id=? ORDER BY LENGTH(folder) DESC, id",
-            (session_id,)).fetchall()
-        return [dict(r) for r in rows]
-
-    def delete_folder_decision(self, session_id: int, folder: str) -> None:
-        with self._tx() as c:
-            c.execute("DELETE FROM folder_decisions WHERE session_id=? AND folder=?",
-                      (session_id, folder))
+    # NOTA: la tabla `folder_decisions` (decisión por carpeta, Fases 3/4) se
+    # queda en el esquema sin CRUD activo — el paso de Estructura usa ahora UN
+    # ÚNICO patrón para todo el análisis, con la raíz de cada archivo detectada
+    # automáticamente (carpeta con texto + fecha). Ver docs/SECURITY.md.
 
 
 __all__ = ["DatabaseManager", "SCHEMA_VERSION"]

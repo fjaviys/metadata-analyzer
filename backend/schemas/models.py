@@ -123,6 +123,14 @@ class FileOverrideRequest(BaseModel):
         ..., description="keep: no tocar · filename: usar filename_date · folder: usar path_date")
 
 
+class BulkFileOverrideRequest(BaseModel):
+    """Misma decisión aplicada a una selección entera de archivos."""
+    session_id: int
+    paths: list[str] = Field(..., min_length=1)
+    kind: Literal["keep", "filename", "folder"] = Field(
+        ..., description="keep: no tocar · filename: usar filename_date · folder: usar path_date")
+
+
 # --------------------------- reorganización (Fase 2) ------------------------
 
 class ReorganizeRequest(BaseModel):
@@ -159,18 +167,6 @@ class ReorganizePreviewRequest(BaseModel):
     base_folder: Optional[str] = Field(None, description="Solo si base_mode='manual'")
     layout: str = Field("AAAA/MM", description="Layout destino por defecto del run")
     date_source: Literal["session", "exif_live"] = "session"
-
-
-class FolderDecisionRequest(BaseModel):
-    session_id: int
-    folder: str
-    structure_mode: Optional[Literal["update", "keep"]] = None
-    structure_layout: Optional[str] = Field(
-        None, description="Patrón AAAA/MM… custom para esta carpeta; "
-                          "si se omite el campo, no se toca el valor previo")
-    clear_structure_layout: bool = Field(
-        False, description="True para volver a usar el layout global del run "
-                           "(borra el patrón custom de esta carpeta)")
 
 
 class ApiError(BaseModel):

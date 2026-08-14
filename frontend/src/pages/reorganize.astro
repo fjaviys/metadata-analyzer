@@ -6,9 +6,10 @@ import StepNav from '../components/StepNav.astro';
 <MainLayout title="Reorganizar · Metadata Analyzer" active="reorganize">
   <h1 class="mb-2 text-xl font-semibold text-slate-800">Paso 2 · Reorganización de carpetas</h1>
   <p class="mb-6 max-w-2xl text-slate-600">
-    Por cada carpeta, decide si mantienes su estructura o agrupas sus archivos
-    por fecha en subcarpetas. La carpeta raíz analizada nunca se mueve. Si has
-    corregido metadatos de verdad en esta sesión, tendrás que volver a
+    Elige un patrón y comprueba en el árbol cómo queda todo antes de mover
+    nada: cada archivo se agrupa por fecha dentro de su carpeta raíz, y las
+    carpetas con nombre propio (<code>vacaciones 2009</code>) se conservan. Si
+    has corregido metadatos de verdad en esta sesión, tendrás que volver a
     analizar antes de continuar.
   </p>
   <ReorganizeRunner client:load />

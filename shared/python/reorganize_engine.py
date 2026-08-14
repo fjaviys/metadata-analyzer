@@ -30,28 +30,53 @@ import metadata_analyzer as ma
 from date_detector import _detect_component
 
 _YEAR_RE = re.compile(r"^(19|20)\d{2}$")
+_SEPS_RE = re.compile(r"[\s\-._]+")
 
 
 def _component_is_date_like(comp: str) -> bool:
-    """True si un nombre de carpeta parece parte de una fecha (año/mes/día o
-    fecha embebida compacta), para poder "pelarlo" al calcular la carpeta base."""
+    """
+    True si un nombre de carpeta es ÍNTEGRAMENTE una fecha (año, día, o fecha
+    embebida compacta), para poder "pelarlo" al calcular la carpeta base.
+
+    Ojo con el matiz: una carpeta con **texto + fecha** ("vacaciones 2009",
+    "vacaciones 200908") NO es date-like — es una *raíz* que el usuario quiere
+    conservar, y el pelado debe detenerse ahí. Por eso no basta con que
+    `_detect_component` encuentre una fecha (usa `.search()`, así que la
+    detectaría embebida en cualquier parte del nombre): se exige además que la
+    coincidencia cubra todo el componente.
+    """
     if _YEAR_RE.match(comp):
         return True
     if re.fullmatch(r"\d{1,2}", comp):
         return 1 <= int(comp) <= 31
-    return _detect_component(comp).is_valid
+    det = _detect_component(comp)
+    if not det.is_valid:
+        return False
+    normalize = lambda s: _SEPS_RE.sub("", s).strip()  # noqa: E731
+    return normalize(det.matched_text) == normalize(comp)
 
 
-def compute_base_folder(path: str) -> str:
+def compute_base_folder(path: str, stop_at: Optional[str] = None) -> str:
     """
     Pela automáticamente las subcarpetas de fecha desde la más profunda hacia
-    arriba, deteniéndose en la primera carpeta que NO parezca fecha. P. ej.
-    'fotos/2009/08/02/IMG.jpg' -> carpeta base 'fotos'.
+    arriba, deteniéndose en la primera carpeta que NO sea una fecha completa
+    (la *raíz*). P. ej. 'fotos/2009/08/02/IMG.jpg' -> carpeta base 'fotos', y
+    'fotos/vacaciones 2009/2009/08/IMG.jpg' -> 'fotos/vacaciones 2009'.
+
+    `stop_at` (la raíz analizada) limita el pelado: nunca se sube por encima de
+    ella, aunque su propio nombre parezca una fecha. Sin este límite, analizar
+    una carpeta llamada p. ej. '2009' movería los archivos FUERA del árbol
+    analizado.
     """
     directory = os.path.dirname(path).replace("\\", "/")
     is_abs = directory.startswith("/")
     parts = [p for p in directory.split("/") if p]
-    while parts and _component_is_date_like(parts[-1]):
+    floor = 0
+    if stop_at:
+        stop_parts = [p for p in stop_at.replace("\\", "/").split("/") if p]
+        if parts[:len(stop_parts)] == stop_parts:
+            floor = len(stop_parts)
+    while len(parts) > floor and _component_is_date_like(parts[-1]):
         parts.pop()
     result = "/".join(parts)
     return ("/" + result) if is_abs else result
@@ -148,6 +173,7 @@ class ReorganizePlan:
     action: str                     # "move" | "skip"
     target: Optional[str] = None
     reason: str = ""
+    base: Optional[str] = None      # raíz detectada (informativo, para la preview)
 
 
 def plan_reorganize(rows: list[dict], base_mode: str, base_folder: Optional[str],

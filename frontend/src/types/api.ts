@@ -153,7 +153,6 @@ export interface ProgressEvent {
 
 export type BaseMode = 'auto' | 'root' | 'manual';
 export type DateSource = 'session' | 'exif_live';
-export type StructureMode = 'update' | 'keep';
 
 export interface ReorganizeRequest {
   session_id: number;
@@ -200,15 +199,6 @@ export interface ReorganizeRunSummary {
   total: number;
 }
 
-export interface FolderDecision {
-  id: number;
-  session_id: number;
-  folder: string;
-  structure_mode: StructureMode;
-  structure_layout: string | null;
-  created_at?: string;
-}
-
 export interface GateStatus {
   blocked: boolean;
   reason: string | null;
@@ -226,6 +216,8 @@ export interface ReorganizePreviewRequest {
 export interface ReorganizePreviewMove {
   path: string;
   before_dir?: string;
+  /** Raíz detectada del archivo (carpeta con texto, no una fecha pura). */
+  base_dir?: string | null;
   after_dir?: string;
   reason?: string;
   skip_reason?: string;

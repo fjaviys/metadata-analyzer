@@ -6,10 +6,11 @@ import StepNav from '../components/StepNav.astro';
 <MainLayout title="Correcciones · Metadata Analyzer" active="corrections">
   <h1 class="mb-2 text-xl font-semibold text-slate-800">Paso 1 · Corrección de metadatos</h1>
   <p class="mb-6 max-w-2xl text-slate-600">
-    Por archivo, decide si mantienes la fecha actual o la corriges usando la
-    fecha del nombre de archivo o de la carpeta contenedora. Empieza siempre
-    por el modo simulación (dry-run). La corrección real requiere confirmación
-    explícita y hace backup + verificación de cada archivo.
+    Selecciona los archivos (o una carpeta entera) y aplica el patrón: mantener
+    la fecha actual, o corregirla con la del nombre de archivo o la de la
+    carpeta contenedora. Empieza siempre por el modo simulación (dry-run). La
+    corrección real requiere confirmación explícita y hace backup +
+    verificación de cada archivo.
   </p>
   <CorrectionsRunner client:load />
   <StepNav

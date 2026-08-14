@@ -1,12 +1,11 @@
 """
 services/reorganize_service.py — Paso 2: reestructurar carpetas por fecha.
 
-Independiente del paso de metadatos. Por cada carpeta bajo la raíz analizada
-(la raíz nunca se mueve), cascada de `folder_decisions.structure_mode` /
-`structure_layout` por profundidad (default `keep` = no se toca nada salvo
-que el usuario lo pida explícitamente para esa carpeta o una ancestro suya).
-El patrón de agrupación puede fijarse por carpeta, con un layout global por
-defecto para las que no tengan uno propio.
+Independiente del paso de metadatos. UN ÚNICO patrón (`layout`) para todo el
+análisis: cada archivo se agrupa por fecha dentro de su *raíz*, entendida como
+la carpeta más profunda que lo contiene y que NO es íntegramente una fecha
+(p. ej. 'vacaciones 2009' es raíz y se conserva; '2009/08/02' se pela). La
+raíz analizada nunca se sobrepasa hacia arriba.
 
 Seguridad:
 - Solo mueve ficheros con una fecha FIABLE (sesión o EXIF en vivo); nunca
@@ -47,17 +46,6 @@ from services.progress_hub import hub
 
 log = get_logger("reorganize")
 
-_DEFAULT_FOLDER_DECISION = {"structure_mode": "keep", "structure_layout": None}
-
-
-def _folder_decision_for(path: str, decisions: list[dict]) -> dict:
-    """Decisión efectiva: la carpeta más profunda que contiene `path` gana."""
-    for d in decisions:  # ya vienen ordenadas por profundidad de carpeta desc
-        if _under_folder(path, d["folder"]):
-            return d
-    return _DEFAULT_FOLDER_DECISION
-
-
 def _resolve_base(root: str, base_mode: str, base_folder: Optional[str]) -> Optional[str]:
     if base_mode == "manual":
         if not base_folder:
@@ -72,14 +60,18 @@ def _resolve_base(root: str, base_mode: str, base_folder: Optional[str]) -> Opti
 
 def build_structure_plan(session_id: int, subfolders: list[str], root: str,
                          base_mode: str, base_folder: Optional[str],
-                         default_layout: str, date_source: str = "session",
+                         layout: str, date_source: str = "session",
                          ) -> list[ReorganizePlan]:
     """
-    Plan de movimiento por carpeta: solo se mueven archivos bajo una carpeta
-    (o ancestro) con `structure_mode='update'`. Las demás ni se evalúan.
+    Plan de movimiento con UN ÚNICO patrón para todo el análisis.
+
+    La carpeta destino de cada archivo se cuelga de su *raíz*: la carpeta más
+    profunda que lo contiene y que no es íntegramente una fecha (p. ej.
+    'vacaciones 2009' sí es raíz; '2009/08/02' se pela). El pelado nunca sube
+    por encima de la raíz analizada. Un archivo sin fecha fiable se omite y se
+    reporta — nunca se fabrica una fecha.
     """
     db = get_db()
-    folder_decisions = db.get_folder_decisions(session_id)   # más profundas primero
     all_rows = db.get_files(session_id, limit=1_000_000)
     real_subs = validate_subfolders(root, subfolders) if subfolders else None
     real_base = _resolve_base(root, base_mode, base_folder)
@@ -91,28 +83,25 @@ def build_structure_plan(session_id: int, subfolders: list[str], root: str,
         path = row["path"]
         if real_subs is not None and not any(_under_folder(path, s) for s in real_subs):
             continue
-        fdec = _folder_decision_for(path, folder_decisions)
-        if fdec["structure_mode"] != "update":
-            continue  # carpeta (o toda su rama) en 'mantener': ni se evalúa
 
+        base = compute_base_folder(path, stop_at=root) if base_mode == "auto" else real_base
         dt = resolve_row_date(row, date_source)
         if dt is None:
-            plans.append(ReorganizePlan(path, "skip", reason="sin fecha fiable"))
+            plans.append(ReorganizePlan(path, "skip", reason="sin fecha fiable", base=base))
             continue
-        base = compute_base_folder(path) if base_mode == "auto" else real_base
         if not base:
             plans.append(ReorganizePlan(path, "skip", reason="carpeta base vacía"))
             continue
-        layout = fdec["structure_layout"] or default_layout
         target_dir = build_target_dir(base, layout, dt)
         target = os.path.join(target_dir, os.path.basename(path))
         if os.path.abspath(target) == os.path.abspath(path):
-            plans.append(ReorganizePlan(path, "skip", reason="ya está en la carpeta destino"))
+            plans.append(ReorganizePlan(path, "skip", reason="ya está en la carpeta destino",
+                                        base=base))
             continue
         target = _unique_target(target, reserved)
         reserved.add(target)
         plans.append(ReorganizePlan(
-            path, "move", target=target,
+            path, "move", target=target, base=base,
             reason=f"fecha ({date_source}): {dt.date().isoformat()}"))
 
     return plans
@@ -204,9 +193,10 @@ def preview(session_id: int, subfolders: list[str], base_mode: str,
                                  base_folder, layout, date_source)
     moves = []
     for p in plans:
+        entry = {"path": p.path, "before_dir": os.path.dirname(p.path), "base_dir": p.base}
         if p.action == "move":
-            moves.append({"path": p.path, "before_dir": os.path.dirname(p.path),
-                          "after_dir": os.path.dirname(p.target), "reason": p.reason})
+            entry.update({"after_dir": os.path.dirname(p.target), "reason": p.reason})
         else:
-            moves.append({"path": p.path, "skip_reason": p.reason})
+            entry["skip_reason"] = p.reason
+        moves.append(entry)
     return {"moves": moves}

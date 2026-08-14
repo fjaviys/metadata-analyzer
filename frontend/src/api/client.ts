@@ -2,10 +2,10 @@
 
 import type {
   AnalysisRequest, AnalysisStarted, AnalyzedFile, BrowseResult, ConnectionTestRequest,
-  ConnectionTestResult, CorrectionRequest, CorrectionRow, CorrectionStarted, FolderDecision,
+  ConnectionTestResult, CorrectionRequest, CorrectionRow, CorrectionStarted,
   FolderNode, FormatCatalog, GateStatus, LayoutPreset, ProgressEvent, ReorganizeMove,
   ReorganizePreviewRequest, ReorganizePreviewResult, ReorganizeRequest, ReorganizeRunSummary,
-  ReorganizeStarted, SessionSummary, StructureMode,
+  ReorganizeStarted, SessionSummary,
 } from '../types/api';
 
 // Config de runtime inyectada por el servidor (window.__MA_CONFIG__ en MainLayout).
@@ -104,6 +104,12 @@ export const api = {
     request<{ id: number; path: string; kind: string }>(
       '/corrections/file-overrides', { method: 'POST', body: JSON.stringify(body) }),
 
+  /** Aplica la misma decisión a toda una selección en una sola petición. */
+  setFileOverridesBulk: (body: { session_id: number; paths: string[];
+                                 kind: 'keep' | 'filename' | 'folder' }) =>
+    request<{ kind: string; applied: string[]; skipped: Array<{ path: string; reason: string }> }>(
+      '/corrections/file-overrides/bulk', { method: 'POST', body: JSON.stringify(body) }),
+
   listFileOverrides: (sessionId: number) =>
     request<{ file_overrides: Array<{ id: number; path: string; kind: string }> }>(
       `/corrections/file-overrides?session_id=${sessionId}`),
@@ -140,19 +146,6 @@ export const api = {
 
   listReorganizeRuns: (sessionId: number) =>
     request<{ runs: ReorganizeRunSummary[] }>(`/reorganize/runs?session_id=${sessionId}`),
-
-  listStructureFolderDecisions: (sessionId: number) =>
-    request<{ decisions: FolderDecision[] }>(`/reorganize/folder-decisions?session_id=${sessionId}`),
-
-  setStructureFolderDecision: (body: { session_id: number; folder: string;
-                                       structure_mode?: StructureMode; structure_layout?: string;
-                                       clear_structure_layout?: boolean }) =>
-    request<FolderDecision>('/reorganize/folder-decision', { method: 'POST', body: JSON.stringify(body) }),
-
-  deleteStructureFolderDecision: (sessionId: number, folder: string) =>
-    request<{ deleted: string }>(
-      `/reorganize/folder-decision?session_id=${sessionId}&folder=${encodeURIComponent(folder)}`,
-      { method: 'DELETE' }),
 
   getReorganizeRun: (runId: string, opts: { only_changes?: boolean;
                                             limit?: number; offset?: number } = {}) => {

@@ -137,22 +137,49 @@ Correcciones (`/corrections`) y Reorganización (`/reorganize`) son pasos
 **secuenciales e independientes** — cada uno con su propia página, árbol y
 ejecución (dry-run/real). No comparten un único run.
 
-- **Estructura por carpeta** (tabla `folder_decisions`, campo `structure_mode`):
-  herencia por profundidad de carpeta (la más profunda que contiene al archivo
-  decide), default `keep` — nada se mueve salvo que el usuario lo pida
-  explícitamente para esa carpeta o un ancestro suyo. La carpeta raíz analizada
-  nunca se mueve. El patrón de agrupación (`structure_layout`) puede fijarse
-  por carpeta, con un layout global por defecto para las que no tengan uno
-  propio.
+- **Paso 1 · selección explícita, aplicación en bloque.** La decisión se toma
+  seleccionando archivos (clic / Ctrl+clic / Mayús+clic, o marcando una carpeta
+  entera) y pulsando el patrón; se guarda con una sola petición
+  (`POST /corrections/file-overrides/bulk`). Antes de ejecutar nada, cada fila
+  muestra ya **origen → resultado** y la acción resultante, así que lo que se
+  va a escribir es visible por adelantado. Los archivos cuya fuente elegida no
+  tiene fecha se marcan como **«no aplicable»** y no se aplican ni en el
+  endpoint (400 / `skipped`) ni en el motor — nunca se fabrica una fecha.
+
+- **Paso 2 · un solo patrón, raíz detectada automáticamente.** No hay decisión
+  por carpeta: se elige **un patrón** para todo el análisis y cada archivo se
+  agrupa dentro de su **raíz**, entendida como la carpeta más profunda que lo
+  contiene y que **no es íntegramente una fecha**. Es decir: `2009`, `200908` o
+  `2009-08-02` se "pelan" y se sustituyen por el patrón, mientras que una
+  carpeta con **texto + fecha** (`vacaciones 2009`) es una raíz y **se
+  conserva**. Antes se pelaba también esa carpeta (la detección buscaba una
+  fecha *embebida* en cualquier parte del nombre), perdiendo el nombre elegido
+  por el usuario. El pelado además **nunca sube por encima de la raíz
+  analizada** (`stop_at`), de modo que analizar una carpeta llamada p. ej.
+  `2009` no puede mover archivos fuera del árbol analizado.
+
+- **Ver antes de ejecutar.** El paso 2 exige generar la previsualización
+  (`POST /reorganize/preview`, solo lectura) para el patrón actual antes de
+  habilitar el run; si se cambia el patrón, la vista se marca como
+  desactualizada y los controles de ejecución se bloquean hasta recalcularla.
+  No se lanza un run contra un resultado que no se ha visto.
+
 - **Bloqueo por re-análisis**: si una sesión tiene alguna corrección REAL de
   metadatos aplicada (`has_real_corrections`), el paso de Estructura se
   rechaza para esa sesión (**409 Conflict**) hasta volver a analizar la
   carpeta — los datos de la sesión pueden no reflejar ya lo que hay en disco.
   Tras una corrección real, la UI también muestra un aviso proactivo
   recomendando re-analizar antes de continuar.
+
 - El **undo** de un run de reorganización solo revierte los **movimientos**;
   las correcciones de metadatos no se deshacen automáticamente y solo se
   pueden restaurar manualmente desde `data/backups/`.
+
+**Deuda aceptada (documentada, sin migración):** las tablas `path_overrides` y
+`folder_decisions` siguen en el esquema sin CRUD activo — sus funcionalidades
+(patrón manual por carpeta y decisión de estructura por carpeta) ya no existen.
+Se dejan tal cual para evitar un `ALTER TABLE`/migración con riesgo sobre bases
+de datos ya creadas.
 
 ## Recuperación manual
 

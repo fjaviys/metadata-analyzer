@@ -170,6 +170,50 @@ def test_file_override_keep_filename_folder_roundtrip(tmp_path):
     assert correction_service.build_metadata_candidates(sid, [], root) == []  # sin decisión = keep
 
 
+def test_file_overrides_bulk_applies_and_reports_skipped(tmp_path):
+    """Aplicar el patrón a una selección entera: los que no tienen fecha en esa
+    fuente se reportan en `skipped`, nunca se les inventa una."""
+    db = get_db()
+    root = str(tmp_path)
+    sid = db.create_session(root, "local")
+    ok1 = _seed_file(db, sid, root, "a", "IMG_20081014.jpg", fname="2008:10:14 00:00:00")
+    ok2 = _seed_file(db, sid, root, "a", "IMG_20200702.jpg", fname="2020:07:02 00:00:00")
+    sin_fecha = _seed_file(db, sid, root, "a", "escaneo.jpg", exif="2000:01:01 00:00:00")
+
+    r = client.post("/api/corrections/file-overrides/bulk", json={
+        "session_id": sid, "paths": [ok1, ok2, sin_fecha, "/tmp/no-existe.jpg"],
+        "kind": "filename"})
+    assert r.status_code == 200
+    body = r.json()
+    assert set(body["applied"]) == {ok1, ok2}
+    skipped = {s["path"]: s["reason"] for s in body["skipped"]}
+    assert "el nombre" in skipped[sin_fecha]
+    assert "no encontrado" in skipped["/tmp/no-existe.jpg"]
+
+    # se ha persistido solo para los aplicables
+    kinds = {o["path"]: o["kind"] for o in db.get_file_overrides(sid)}
+    assert kinds == {ok1: "filename", ok2: "filename"}
+    assert {c["path"] for c in correction_service.build_metadata_candidates(sid, [], root)} \
+        == {ok1, ok2}
+
+
+def test_file_overrides_bulk_reapply_replaces_previous_kind(tmp_path):
+    db = get_db()
+    root = str(tmp_path)
+    sid = db.create_session(root, "local")
+    p = _seed_file(db, sid, root, "2009/02102009", "IMG_20081014.jpg",
+                   fname="2008:10:14 00:00:00", pdate="2009:10:02 00:00:00")
+
+    client.post("/api/corrections/file-overrides/bulk",
+                json={"session_id": sid, "paths": [p], "kind": "filename"})
+    client.post("/api/corrections/file-overrides/bulk",
+                json={"session_id": sid, "paths": [p], "kind": "folder"})
+
+    assert len(db.get_file_overrides(sid)) == 1  # upsert, no duplica
+    assert correction_service.build_metadata_candidates(sid, [], root)[0]["recommended_date"] \
+        == "2009:10:02 00:00:00"
+
+
 def test_file_override_rejects_source_without_date(tmp_path):
     db = get_db()
     root = str(tmp_path)
