@@ -361,17 +361,45 @@ class ReorganizeEngine:
         })
 
 
+def _prune_empty_dirs(dirs: set[str], root: str) -> None:
+    """Borra `dirs` (y sus ancestros) mientras estén vacíos, subiendo desde la
+    más profunda. Se detiene en la primera carpeta no vacía y nunca borra la
+    raíz analizada de la sesión ni nada por encima de ella."""
+    root_abs = os.path.abspath(root)
+    for d in dirs:
+        current = os.path.abspath(d)
+        while current != root_abs and (current + os.sep).startswith(root_abs + os.sep):
+            if not os.path.isdir(current) or os.listdir(current):
+                break
+            try:
+                os.rmdir(current)
+            except OSError:
+                break
+            current = os.path.dirname(current)
+
+
 def undo_run(db, run_id: str, move_fn: MoveFn = _do_move) -> dict:
-    """Deshace un run REAL: mueve cada archivo movido de vuelta a su ruta original."""
+    """Deshace un run REAL: mueve cada archivo movido de vuelta a su ruta original,
+    y elimina las carpetas destino que el run creó y que hayan quedado vacías."""
     moves = [m for m in db.get_reorganize_moves(run_id=run_id) if m["status"] == "moved"]
     undone, failed = 0, []
+    emptied_dirs: set[str] = set()
+    session_id = moves[0]["session_id"] if moves else None
     for m in reversed(moves):
         try:
             move_fn(m["new_path"], m["original_path"])
             db.update_reorganize_move(m["id"], status="reverted")
             undone += 1
+            emptied_dirs.add(os.path.dirname(m["new_path"]))
         except OSError as e:
             failed.append({"path": m["new_path"], "error": str(e)})
+
+    if emptied_dirs and session_id is not None:
+        session = db.get_session(session_id)
+        root = session.get("root") if session else None
+        if root:
+            _prune_empty_dirs(emptied_dirs, root)
+
     return {"undone": undone, "failed": failed}
 
 

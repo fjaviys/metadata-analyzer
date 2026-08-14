@@ -256,3 +256,52 @@ def test_undo_run(tmp_path):
     assert not dst.exists()
     moves = db.get_reorganize_moves(run_id="r4")
     assert moves[0]["status"] == "reverted"
+
+
+def test_undo_run_removes_empty_target_dirs(tmp_path):
+    src = tmp_path / "varios" / "20180101" / "foto.jpg"
+    src.parent.mkdir(parents=True)
+    src.write_text("x")
+    dst = tmp_path / "varios" / "2018" / "01" / "foto.jpg"
+
+    db = _db(tmp_path)
+    plans = [re_.ReorganizePlan(str(src), "move", target=str(dst))]
+    eng = re_.ReorganizeEngine(db=db, session_id=1)
+    eng.run(plans, dry_run=False, run_id="r5")
+    assert dst.exists()
+
+    result = re_.undo_run(db, "r5")
+    assert result["undone"] == 1
+    assert src.exists()
+    # las carpetas destino vacías que dejó el run desaparecen, subiendo hasta
+    # la primera no vacía, sin borrar la raíz analizada ni nada por encima.
+    assert not (tmp_path / "varios" / "2018" / "01").exists()
+    assert not (tmp_path / "varios" / "2018").exists()
+    assert (tmp_path / "varios").exists()
+    assert tmp_path.exists()
+
+
+def test_undo_run_keeps_target_dir_with_other_files(tmp_path):
+    src = tmp_path / "eventos" / "20200702" / "foto.jpg"
+    src.parent.mkdir(parents=True)
+    src.write_text("x")
+    dst_dir = tmp_path / "eventos" / "2020" / "07"
+    dst = dst_dir / "foto.jpg"
+
+    db = _db(tmp_path)
+    plans = [re_.ReorganizePlan(str(src), "move", target=str(dst))]
+    eng = re_.ReorganizeEngine(db=db, session_id=1)
+    eng.run(plans, dry_run=False, run_id="r6")
+    assert dst.exists()
+
+    # otro archivo ajeno al run que queda en la misma carpeta destino
+    other = dst_dir / "otro.jpg"
+    other.write_text("y")
+
+    result = re_.undo_run(db, "r6")
+    assert result["undone"] == 1
+    assert src.exists()
+    assert not dst.exists()
+    # la carpeta destino se conserva porque todavía tiene otro archivo
+    assert dst_dir.exists()
+    assert other.exists()
